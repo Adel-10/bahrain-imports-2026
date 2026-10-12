@@ -1,0 +1,21 @@
+start_date,end_date,event,category,route_affected,date_precision,source
+2021-05-27,2021-06-10,"COVID-19 closures: malls, restaurants (delivery only), gyms and cinemas shut",covid,demand,exact,https://www.thenationalnews.com/gulf-news/bahrain-closes-venues-for-two-weeks-in-bid-to-cut-covid-spread-1.1230398
+2022-03-28,,COVID-19 traffic-light system suspended (restrictions end),covid,demand,exact,https://www.moh.gov.bh/News/Details/5260?lang=en
+2026-02-28,,US-Israeli strikes on Iran begin; Iranian strikes on Bahrain begin the same day,conflict,all,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-02-28,2026-06-17,Strait of Hormuz closed to most shipping,hormuz,sea,exact,https://en.wikipedia.org/wiki/2026_Strait_of_Hormuz_campaign
+2026-02-28,2026-04-07,Bahrain airspace closed (near-total shutdown of about 40 days),airspace,air,approximate,https://traveltomorrow.com/bahrain-flights-resume-slowly-as-airspace-reopens-amid-fragile-ceasefire/
+2026-03-02,,Mina Salman Port struck by a missile,conflict,sea,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-03-09,,Bapco declares force majeure on group operations,conflict,industry,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-03-10,,Gulf Air relocates its aircraft to airports in Saudi Arabia,airspace,air,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-03-28,,Alba (Bahrain Aluminium) facilities attacked,conflict,industry,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-04-07,2026-04-07,King Fahd Causeway briefly closed as a precaution (a few hours),causeway,land,exact,https://gulfbusiness.com/en/2026/infrastructure/saudi-bahrain-bridge-shut-as-precaution-after-regional-alerts/
+2026-04-08,,US-Iran ceasefire declared (strikes on Bahrain continued that day); Bahrain airspace reopens,ceasefire,air,exact,https://traveltomorrow.com/bahrain-flights-resume-slowly-as-airspace-reopens-amid-fragile-ceasefire/
+2026-04-13,,US naval blockade of Iranian ports takes effect,hormuz,sea,exact,https://en.wikipedia.org/wiki/2026_Strait_of_Hormuz_campaign
+2026-06-03,,Iranian attack on US Fifth Fleet headquarters in Bahrain (intercepted),conflict,all,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-06-11,,Iranian drone and missile attacks on US sites in Bahrain; debris damages homes in Manama,conflict,all,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-06-17,,Islamabad memorandum of understanding signed (toll-free passage and end of US blockade agreed),ceasefire,sea,exact,https://hormuzstraitmonitor.com/crisis-timeline/
+2026-06-18,2026-07-10,"Strait of Hormuz partially reopened, traffic well below pre-war (IRGC declared it closed again on 2026-06-20, contested)",hormuz,sea,approximate,https://hormuzstraitmonitor.com/crisis-timeline/
+2026-07-08,,Memorandum declared over; hostilities resume,conflict,all,exact,https://hormuzstraitmonitor.com/crisis-timeline/
+2026-07-11,,Iran declares the Strait of Hormuz closed until further notice (still closed as of 2026-10-11),hormuz,sea,exact,https://straits.live/
+2026-07-14,,Iranian attacks set fire to Fifth Fleet fuel tanks and destroy radars in Bahrain,conflict,all,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war
+2026-07-31,,Iran says it attacked US assets and bases in Bahrain and Kuwait,conflict,all,exact,https://en.wikipedia.org/wiki/Bahrain_in_the_2026_Iran_war

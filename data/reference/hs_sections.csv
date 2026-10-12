@@ -1,0 +1,100 @@
+chapter,section_id,section_roman,section_name
+01,1,I,Animal products
+02,1,I,Animal products
+03,1,I,Animal products
+04,1,I,Animal products
+05,1,I,Animal products
+06,2,II,Vegetable products
+07,2,II,Vegetable products
+08,2,II,Vegetable products
+09,2,II,Vegetable products
+10,2,II,Vegetable products
+11,2,II,Vegetable products
+12,2,II,Vegetable products
+13,2,II,Vegetable products
+14,2,II,Vegetable products
+15,3,III,Fats and oils
+16,4,IV,"Food, drinks and tobacco"
+17,4,IV,"Food, drinks and tobacco"
+18,4,IV,"Food, drinks and tobacco"
+19,4,IV,"Food, drinks and tobacco"
+20,4,IV,"Food, drinks and tobacco"
+21,4,IV,"Food, drinks and tobacco"
+22,4,IV,"Food, drinks and tobacco"
+23,4,IV,"Food, drinks and tobacco"
+24,4,IV,"Food, drinks and tobacco"
+25,5,V,Minerals and fuels
+26,5,V,Minerals and fuels
+27,5,V,Minerals and fuels
+28,6,VI,Chemicals
+29,6,VI,Chemicals
+30,6,VI,Chemicals
+31,6,VI,Chemicals
+32,6,VI,Chemicals
+33,6,VI,Chemicals
+34,6,VI,Chemicals
+35,6,VI,Chemicals
+36,6,VI,Chemicals
+37,6,VI,Chemicals
+38,6,VI,Chemicals
+39,7,VII,Plastics and rubber
+40,7,VII,Plastics and rubber
+41,8,VIII,"Hides, leather and travel goods"
+42,8,VIII,"Hides, leather and travel goods"
+43,8,VIII,"Hides, leather and travel goods"
+44,9,IX,Wood and cork
+45,9,IX,Wood and cork
+46,9,IX,Wood and cork
+47,10,X,Paper
+48,10,X,Paper
+49,10,X,Paper
+50,11,XI,Textiles and clothing
+51,11,XI,Textiles and clothing
+52,11,XI,Textiles and clothing
+53,11,XI,Textiles and clothing
+54,11,XI,Textiles and clothing
+55,11,XI,Textiles and clothing
+56,11,XI,Textiles and clothing
+57,11,XI,Textiles and clothing
+58,11,XI,Textiles and clothing
+59,11,XI,Textiles and clothing
+60,11,XI,Textiles and clothing
+61,11,XI,Textiles and clothing
+62,11,XI,Textiles and clothing
+63,11,XI,Textiles and clothing
+64,12,XII,Footwear and headgear
+65,12,XII,Footwear and headgear
+66,12,XII,Footwear and headgear
+67,12,XII,Footwear and headgear
+68,13,XIII,"Stone, ceramics and glass"
+69,13,XIII,"Stone, ceramics and glass"
+70,13,XIII,"Stone, ceramics and glass"
+71,14,XIV,Precious metals and jewellery
+72,15,XV,Base metals
+73,15,XV,Base metals
+74,15,XV,Base metals
+75,15,XV,Base metals
+76,15,XV,Base metals
+77,15,XV,Base metals
+78,15,XV,Base metals
+79,15,XV,Base metals
+80,15,XV,Base metals
+81,15,XV,Base metals
+82,15,XV,Base metals
+83,15,XV,Base metals
+84,16,XVI,Machinery and electrical
+85,16,XVI,Machinery and electrical
+86,17,XVII,Vehicles and transport
+87,17,XVII,Vehicles and transport
+88,17,XVII,Vehicles and transport
+89,17,XVII,Vehicles and transport
+90,18,XVIII,Instruments and clocks
+91,18,XVIII,Instruments and clocks
+92,18,XVIII,Instruments and clocks
+93,19,XIX,Arms and ammunition
+94,20,XX,Miscellaneous manufactures
+95,20,XX,Miscellaneous manufactures
+96,20,XX,Miscellaneous manufactures
+97,21,XXI,Art and antiques
+98,22,-,National special codes
+99,22,-,National special codes

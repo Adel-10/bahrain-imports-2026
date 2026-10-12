@@ -1,0 +1,92 @@
+{
+  "imports_2021": {
+    "dataset_id": "05-import-2021",
+    "title": "Imports 2021",
+    "portal_modified": "2023-08-08T07:03:17+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/05-import-2021/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:25:33+00:00",
+    "rows": 314055,
+    "bytes": 77291974,
+    "sha256": "5e1054eadc401014eb8bf5dda859ded1172fc5284d2b6d26d9a83d07c9b5ece3"
+  },
+  "imports_2022": {
+    "dataset_id": "04-import-2022",
+    "title": "Imports 2022",
+    "portal_modified": "2023-08-08T07:07:16+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/04-import-2022/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:25:59+00:00",
+    "rows": 320747,
+    "bytes": 79234113,
+    "sha256": "4eb3b52f511981d5c679a415ab6af8a8637506be6b7b585dec62413ca5a86a2c"
+  },
+  "imports_2023": {
+    "dataset_id": "01-import-non-oil-classified-by-commodity-and-country-for-2023",
+    "title": "Import 2023",
+    "portal_modified": "2025-03-19T15:25:39.213000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/01-import-non-oil-classified-by-commodity-and-country-for-2023/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:26:21+00:00",
+    "rows": 321376,
+    "bytes": 79640772,
+    "sha256": "7e42ce9beb00b5881054e38cbe1272b1675f083020fae52be94ee84d6c833ac9"
+  },
+  "imports_2024": {
+    "dataset_id": "import-2024",
+    "title": "Import 2024",
+    "portal_modified": "2025-07-09T08:57:24.134000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/import-2024/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:26:45+00:00",
+    "rows": 322062,
+    "bytes": 76999604,
+    "sha256": "d957a4457a2d751ed7747629fe020240a1731b462eb3a6c8fba599d0a3014662"
+  },
+  "imports_2025": {
+    "dataset_id": "import-1-2025",
+    "title": "Import 2025",
+    "portal_modified": "2026-06-30T07:34:03.689000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/import-1-2025/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:27:07+00:00",
+    "rows": 324818,
+    "bytes": 79486695,
+    "sha256": "30d796e139e6b379e327e2b05f65c039aef160a613de5bcbcca24e97cafa0f23"
+  },
+  "imports_2026": {
+    "dataset_id": "import-2026",
+    "title": "Import 2026",
+    "portal_modified": "2026-08-20T08:23:05.492000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/import-2026/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:27:18+00:00",
+    "rows": 155241,
+    "bytes": 39763116,
+    "sha256": "2ea971d7900eca67adb0ccc27e10c69b54c2bee96fce1ec9d3306f9c6d5378c1"
+  },
+  "port_containers": {
+    "dataset_id": "01-container-statistics-at-khalifa-bin-salman-port",
+    "title": "Container Statistics at Khalifa Bin Salman Port",
+    "portal_modified": "2026-10-12T09:41:22.434000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/01-container-statistics-at-khalifa-bin-salman-port/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:27:19+00:00",
+    "rows": 465,
+    "bytes": 59198,
+    "sha256": "61c3b3950d72120f95a3b87850b693f9ff69c41b81b559de47691107986f0fa6"
+  },
+  "port_vessels": {
+    "dataset_id": "02-vessel-traffic-statistics-at-khalifa-bin-salman-port",
+    "title": "Vessel Traffic Statistics at Khalifa Bin Salman Port",
+    "portal_modified": "2026-10-12T09:42:56.698000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/02-vessel-traffic-statistics-at-khalifa-bin-salman-port/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:27:21+00:00",
+    "rows": 372,
+    "bytes": 37081,
+    "sha256": "703ac07954aa82b4369fb206e08abc62ead0c12acaf7df2b11105e8a75a7413b"
+  },
+  "airport_cargo": {
+    "dataset_id": "02-caa-monthly-air-cargo-movement-at-bahrain-international-airport",
+    "title": "Monthly Air Cargo Movement at Bahrain International Airport",
+    "portal_modified": "2026-09-22T10:48:14.417000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/02-caa-monthly-air-cargo-movement-at-bahrain-international-airport/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-12T13:27:22+00:00",
+    "rows": 144,
+    "bytes": 20449,
+    "sha256": "9fd0bed26ccf44f6008df89f92b44697c38b9be18656f07a5ebe96be31706670"
+  }
+}

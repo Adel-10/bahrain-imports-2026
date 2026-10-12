@@ -1,0 +1,9 @@
+[project]
+name = "bahrain-imports-2026"
+version = "0.1.0"
+description = "How Bahrain's import supply chains absorbed the 2026 Gulf crisis"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

@@ -1,0 +1,17 @@
+# Data files are large and can be re-downloaded with src/download_data.py.
+# MANIFEST.json and data/reference/ are kept: they record provenance and are small.
+data/raw/*.csv
+data/raw/*.part
+data/interim/*
+data/processed/*
+!data/**/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
