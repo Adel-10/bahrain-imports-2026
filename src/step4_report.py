@@ -206,12 +206,24 @@ def write(results: dict, core: pd.DataFrame, calendar: pd.DataFrame) -> None:
 
     fig_national(results, core)
     fig_comparison(check, first_year)
-    top_coef = fig_coefficients(results["model"])
+    fig_coefficients(results["model"])
     runs = gradient_descent_runs(results["train_2026"])
     fig_gradient_descent(runs, best["Linear"]["ridge"])
 
     key = "Reported levels (average)"
-    level_cols = [*LEVELS, "Bias %", key]
+    score_cols = {"National total": "National", "Origin region": "By origin region", "Section": "By section",
+                  key: "Overall score"}
+
+    def too_low_high(v: float) -> str:
+        r = round(v, 1)
+        return "about right" if r == 0 else f"{abs(r):.1f}% too {'low' if r < 0 else 'high'}"
+
+    def simple_table(df: pd.DataFrame, label_col: str, labels) -> str:
+        out = pd.DataFrame({label_col: labels})
+        for src, name in score_cols.items():
+            out[name] = [f"{v:.1f}%" for v in df[src]]
+        out["Total for the year"] = [too_low_high(v) for v in df["Bias %"]]
+        return md_table(out)
 
     def family_rows(df):
         rows = []
@@ -220,29 +232,43 @@ def write(results: dict, core: pd.DataFrame, calendar: pd.DataFrame) -> None:
             if fam in best:
                 part = part[part["settings"] == describe(best[fam])]
             rows.append(part.iloc[0])
-        out = pd.DataFrame(rows)
-        out.insert(0, "forecast", out["family"].map(FAMILY_LABELS))
-        return out[["forecast", *level_cols]]
-
-    def fmt(df, cols):
-        df = df.copy()
-        for c in cols:
-            df[c] = df[c].map(lambda v: f"{v:.1f}" if c != "Bias %" else signed(v, 1))
-        return df
+        return pd.DataFrame(rows).set_index("family")
 
     tune_main = tuning[tuning["first_year"] == first_year]
-    linear_rows = tune_main[tune_main["family"] == "Linear"][["settings", *level_cols]]
-    tree_rows = tune_main[tune_main["family"] == "Trees"][["settings", *level_cols]]
-    history_rows = []
-    for fy in (2021, 2022):
-        part = tuning[(tuning["first_year"] == fy) & (tuning["family"] == "Linear") & (tuning["settings"] == describe(best["Linear"]))]
-        history_rows.append({"history used": "2021-2023 (with 2021)" if fy == 2021 else "2022-2023 (without 2021)",
-                             **part[level_cols].iloc[0].to_dict()})
-    check_rows = {y: family_rows(check[(check["year"] == y) & (check["first_year"] == first_year)]) for y in (TUNE_YEAR, CHECK_YEAR)}
-    lin = {y: check_rows[y].set_index("forecast").loc[FAMILY_LABELS["Linear"]] for y in check_rows}
-    simple = {y: check_rows[y].set_index("forecast").loc[FAMILY_LABELS["Simple rule"]] for y in check_rows}
-    trees = {y: check_rows[y].set_index("forecast").loc[FAMILY_LABELS["Trees"]] for y in check_rows}
-    abs_err_tree = tune_main[(tune_main["family"] == "Trees") & tune_main["settings"].str.contains("absolute_error")].iloc[0]
+    check_rows = {y: family_rows(check[(check["year"] == y) & (check["first_year"] == first_year)])
+                  for y in (TUNE_YEAR, CHECK_YEAR)}
+    lin = {y: check_rows[y].loc["Linear"] for y in check_rows}
+    simple = {y: check_rows[y].loc["Simple rule"] for y in check_rows}
+    same = {y: check_rows[y].loc["Same month"] for y in check_rows}
+    trees = {y: check_rows[y].loc["Trees"] for y in check_rows}
+    families = ["Simple rule", "Same month", "Linear", "Trees"]
+    family_names = ["Simple rule (last year's average month)", "Same month last year", "**Linear model**",
+                    "Gradient-boosted trees"]
+
+    tree_rows = tune_main[tune_main["family"] == "Trees"]
+    tree_labels = []
+    for params in tree_rows["params"]:
+        aim = {"absolute_error": "typical month", "poisson": "average month (Poisson method)",
+               "squared_error": "average month (squared-miss method)"}.get(params["loss"], params["loss"])
+        size = {31: "big", 15: "medium", 4: "very small"}.get(params["max_leaf_nodes"], f"{params['max_leaf_nodes']}-leaf")
+        label = f"Aims at the {aim}, {size} trees"
+        if params.get("weight_power", 1.0) < 1:
+            label += ", less weight on the biggest series"
+        if params == best["Trees"]:
+            label = f"**{label} (chosen)**"
+        tree_labels.append(label)
+    abs_err_tree = tree_rows[tree_rows["settings"].str.contains("absolute_error")].iloc[0]
+
+    linear_rows = tune_main[tune_main["family"] == "Linear"]
+    strength = {0.01: "very weak", 0.1: "weak", 1.0: "strong", 10.0: "very strong"}
+    linear_labels = []
+    for params in linear_rows["params"]:
+        label = f"{params['ridge']:g} ({strength.get(params['ridge'], '')})"
+        linear_labels.append(f"**{label}, chosen**" if params == best["Linear"] else label)
+
+    history = [tuning[(tuning["first_year"] == fy) & (tuning["family"] == "Linear")
+                      & (tuning["settings"] == describe(best["Linear"]))].iloc[0] for fy in (2021, 2022)]
+    history_df = pd.DataFrame(history)
 
     ranges = results["ranges"].copy()
     calib = results["calibration"]
@@ -256,47 +282,66 @@ def write(results: dict, core: pd.DataFrame, calendar: pd.DataFrame) -> None:
     errors26["inside"] = errors26["error"].abs() <= errors26["range"]
     jf = errors26[errors26["target_month"].dt.month.isin([1, 2])]
     jf_nat = jf[jf["level"] == "National total"].copy()
-    jf_nat_md = pd.DataFrame({
-        "month": jf_nat["target_month"].dt.strftime("%B %Y"),
-        "forecast (BD m)": (jf_nat["forecast"] / 1e6).map(lambda v: f"{v:,.1f}"),
-        "actual (BD m)": (jf_nat["actual"] / 1e6).map(lambda v: f"{v:,.1f}"),
-        "difference": (jf_nat["error"] * 100).map(lambda v: f"{signed(v, 1)}%"),
-        "range": (jf_nat["range"] * 100).map(lambda v: f"+/-{v:.0f}%"),
-        "inside?": jf_nat["inside"].map({True: "yes", False: "no"}),
-    })
-    jf_levels = jf.groupby("level")["inside"].agg(["sum", "size"])
-    jf_out = jf[~jf["inside"] & (jf["level"] != "National total")].copy()
-    jf_out["name"] = np.where(jf_out["level"] == "Section", jf_out["name"].map(lambda s: SECTION_NAMES.get(int(s), s) if str(s).isdigit() else s), jf_out["name"])
+    jf_nat_md = md_table(pd.DataFrame({
+        "Month": jf_nat["target_month"].dt.strftime("%B %Y"),
+        "Forecast (BD m)": (jf_nat["forecast"] / 1e6).map(lambda v: f"{v:,.1f}"),
+        "Actual (BD m)": (jf_nat["actual"] / 1e6).map(lambda v: f"{v:,.1f}"),
+        "Difference": (jf_nat["error"] * 100).map(lambda v: f"{signed(v, 1)}%"),
+        "Range": (jf_nat["range"] * 100).map(lambda v: f"+/-{v:.0f}%"),
+        "Inside the range?": jf_nat["inside"].map({True: "yes", False: "no"}),
+    }))
+    jf_detail = jf[jf["level"] != "National total"]
+    jf_out = jf_detail[~jf_detail["inside"]]
     n_out_above = int((jf_out["error"] > 0).sum())
+    jf_within = int(np.ceil(jf_nat["error"].abs().max() * 100))
 
-    ranges_md = pd.concat([
-        pd.DataFrame({"total": ["Bahrain (national)"], "range": [f"+/-{nat_range:.0f}%"]}),
-        pd.DataFrame({"total": region_ranges["name"], "range": (region_ranges["range"] * 100).map(lambda v: f"+/-{v:.0f}%")}),
-    ])
-    calib_md = calib.reset_index().rename(columns={"level": "level", "share inside": "months inside the range", "months": "months checked"})
-    calib_md["months inside the range"] = (calib_md["months inside the range"] * 100).map(lambda v: f"{v:.0f}%")
-    calib_md["months checked"] = calib_md["months checked"].astype(int)
+    ranges_md = md_table(pd.concat([
+        pd.DataFrame({"Total": ["**Bahrain (national)**"], "Range for a single month": [f"**+/-{nat_range:.0f}%**"]}),
+        pd.DataFrame({"Total": region_ranges["name"],
+                      "Range for a single month": (region_ranges["range"] * 100).map(lambda v: f"+/-{v:.0f}%")}),
+    ]))
+    calib_md = md_table(pd.DataFrame({
+        "Level": calib.index,
+        "Months checked": calib["months"].astype(int).to_numpy(),
+        "Months inside the range": (calib["share inside"] * 100).map(lambda v: f"{v:.0f}%").to_numpy(),
+    }))
+    calib_low, calib_high = calib["share inside"].min() * 100, calib["share inside"].max() * 100
 
     ridge = best["Linear"]["ridge"]
-    gd_chosen = runs[ridge]
-    gd_weak = runs[min(runs)]
-    n_coef = len(results["model"].coef_)
+    gd_chosen, gd_weak = runs[ridge], runs[min(runs)]
     coef = coefficient_table(results["model"])
     growth_allowance = (results["model"].coef_[0] - 1) * 100
+    improvement = (1 - lin[CHECK_YEAR]["National total"] / simple[CHECK_YEAR]["National total"]) * 100
 
-    text = f"""# Step 4: Forecasting models, tested on 2024 and 2025
+    text = f"""# Step 4: Building and testing the forecasting models
 
 *Generated by `src/backtest.py` (charts and text by `src/step4_report.py`). Re-running the script refreshes every number.*
 
-The whole project depends on one thing: a good estimate of what imports **would have been in 2026 without the war**.
-This step builds models to make that estimate and tests them on two normal years first, so we know how far off they
-usually are. The questions:
+The whole project depends on one estimate: what imports **would have been in 2026 without the war**. This step builds
+forecasting models to make that estimate. Before trusting them with 2026, each model is tested on two normal years,
+2024 and 2025, to see how accurate it is and how far off it usually is.
 
-1. Which forecast is most accurate in normal years?
-2. Does keeping 2021 (the COVID year) help or hurt?
-3. What does the winning model rely on?
-4. How far off is it usually, and can we put a reliable range around its forecasts?
-5. Does it get January and February 2026 (before the war) right?
+## The short answer
+
+| Question | Answer |
+|---|---|
+| Which forecast is most accurate in normal years? | **The linear model.** Nationally it missed by {lin[CHECK_YEAR]['National total']:.1f}% a month on average in 2025, against {simple[CHECK_YEAR]['National total']:.1f}% for the simple rule. |
+| Should 2021 (the COVID year) be used? | **Yes.** The model is more accurate with it. |
+| What does the model rely on? | **Mostly the recent level of imports, plus an allowance for growth.** Everything else makes only small adjustments. |
+| How far off is it usually? | **A single month nationally can be up to {nat_range:.0f}% off** even in a normal year. These ranges were tested and they work. |
+| Does it get January and February 2026 right? | **Yes.** Both months were within {jf_within}% of the forecast, before the war began on 28 February. |
+
+## Words used in this report
+
+| Word | What it means here |
+|---|---|
+| **Series** | One line of monthly numbers: one HS2 chapter from one origin region, for example "chapter 84 (machinery) from Europe". |
+| **Clue** | A piece of information the model uses to make a forecast, such as "the average of the last 3 months". Machine learning calls these *features*. |
+| **Weight** | How much the linear model counts each clue. Machine learning calls these *coefficients*. |
+| **Miss** | How far a forecast was from what actually arrived, ignoring whether it was too high or too low. Averaged over the months and shown as % of actual imports. Lower is better. |
+| **Overall score** | The average of the miss for the national total, for origin regions and for sections, the three levels step 5 reports. Used to pick the winner. |
+| **Total for the year** | Whether the forecasts added up over the whole year were too low or too high. |
+| **Range** | How far from the forecast a single month can be in a normal year: 9 months out of 10 stay inside it. |
 
 ---
 
@@ -304,30 +349,30 @@ usually are. The questions:
 
 ### Step 1: Pretend it's January
 
-Each test copies exactly what will be done for 2026. Standing at the end of December 2023, using only data known by then,
-each model forecasts every month of 2024. Then we compare with what actually arrived. The same is repeated from the end of
-December 2024 for 2025.
+Each test copies exactly what will be done for 2026:
+
+1. Stand at the end of December 2023 and use only data known by then.
+2. Forecast every month of 2024.
+3. Compare the forecasts with what actually arrived.
+4. Repeat from the end of December 2024 for 2025.
 
 ### Step 2: What gets forecast
 
-The models forecast core goods (as decided in step 3), split into **series**: one HS2 chapter from one origin region, for
-example "chapter 84 (machinery) from Europe".
+- The models forecast **core goods** (everything except bulk materials and precious metals, as decided in step 3).
+- Core goods are split into **series**: one HS2 chapter from one origin region.
+- A series needs imports in at least 90% of past months to be forecast on its own. The patchy ones are added together into
+  one "other" series per section and region.
+- That gives **{details['n_series']:,} series** ({details['n_pooled']} of them "other").
+- Adding the series' forecasts together gives forecasts for each section, each origin region and the whole country.
 
-- A series needs imports in at least 90% of past months to be forecast on its own.
-- The patchy ones are added together into one "other" series per section and region.
-- That gives {details['n_series']:,} series ({details['n_pooled']} of them "other").
+### Step 3: The clues
 
-Adding the series' forecasts up gives forecasts for each section, each origin region and the whole country, which always
-agree with each other.
-
-### Step 3: The clues the models get
-
-For each series, the models see clues that were known at the end of December:
+For each series, the models get these clues, all known at the end of December:
 
 | Clue | What it means |
 |---|---|
 | Recent level | Last month, and the average of the last 3, 6 and 12 months |
-| Trend | Growth over the last year, and the average month in the year before |
+| Trend | Growth over the last year, and the average month in the year before that |
 | Same month before | The same month last year and two years ago |
 | How regular the series is | How jumpy it is, and how often it has months with no imports |
 | Size and identity | How big the series is, its section and its origin region |
@@ -335,194 +380,222 @@ For each series, the models see clues that were known at the end of December:
 | COVID | Whether COVID rules applied in the month, or in the past 12 months |
 | Months ahead | How far ahead the forecast is (1 to 12 months) |
 
-Everything is measured relative to the series' own average month, so a small series and a big one look alike to the models.
+Every clue is measured relative to the series' own average month, so a small series and a big one look alike to the models.
 
 ### Step 4: The four forecasts
 
-1. **Simple rule:** last year's average month (the yardstick from step 3).
-2. **Same month last year.**
-3. **Linear model:** a weighted linear regression with a ridge penalty, written from scratch in NumPy. It adds up each
-   clue times a weight, and the weights are chosen to make the squared misses as small as possible. The ridge penalty
-   stops any weight getting too big, which pulls the model towards the simple rule when the evidence is weak.
-4. **Gradient-boosted trees:** many small decision trees, each one correcting the mistakes of the ones before
-   (scikit-learn's HistGradientBoosting, the same method LightGBM made popular). One model learns from all the series at once.
+1. **Simple rule:** every month will be like last year's average month. This is the yardstick from step 3.
+2. **Same month last year:** every month will be like the same month a year earlier.
+3. **Linear model**, written from scratch with NumPy:
+   - It multiplies each clue by a weight and adds them up.
+   - It picks the weights that make the squared misses on past data as small as possible.
+   - A **penalty** stops any weight from getting too big. That pulls the model back towards the simple rule whenever
+     the evidence for a clue is weak. (The technical name is ridge regression.)
+4. **Gradient-boosted trees** (from scikit-learn):
+   - Many small decision trees, each one correcting the mistakes of the ones before.
+   - One model learns from all the series at once.
+   - This is the method behind LightGBM, often the strongest choice for tables like this one.
 
-During training, big series count for more than small ones, because the models are judged on misses in Bahraini dinars.
+When the models learn, big series count for more than small ones, because what matters in the end is the miss in Bahraini dinars.
 
 ### Step 5: How the forecasts are scored
 
-The **miss** is the same idea as in step 3: add up how far each forecast was from the actual value, ignoring above or below.
-There is one change: it is now divided by the **actual** imports instead of the forecast. With several models, the actual
-is the fair yardstick, because it is the same for everyone. Dividing by the forecast would let a model look better just by
-forecasting too high.
-
-The miss is measured at four levels: the national total, each origin region, each section, and each series. The three
-levels step 5 will report (national, region, section) are averaged into one score for choosing the winner.
+The miss works like the normal miss in step 3, with one change: it is divided by the **actual** imports, not by the
+forecast. With several models to compare, the actual is the fair yardstick because it is the same for all of them.
+Dividing by the forecast would let a model look better just by forecasting too high.
 
 ### Step 6: Choose on 2024, confirm on 2025
 
-- **Tuning:** each model's settings, and whether to keep 2021, were chosen using the 2024 test only.
-- **Final check:** 2025 was used once, at the end, with the chosen settings. Because nothing was tuned on it, it is an
-  honest test of how the models will do on a year they haven't seen.
+1. **Choosing (2024):** every choice was made using the 2024 test only: each model's settings, and whether to use 2021.
+2. **Final check (2025):** 2025 was used once, at the end, with the choices already fixed. Nothing was tuned on it, so it
+   shows how the models do on a year they haven't seen. That is the situation 2026 will be in.
 
 ---
 
 ## 1. Which forecast is most accurate?
 
-**What we did:** ran all four forecasts on the 2024 and 2025 tests.
+**What we did:** ran all four forecasts on 2024 and 2025.
 
 **What we found:**
 
-**2025 (final check)**
+**2025: the final check**
 
-{md_table(fmt(check_rows[CHECK_YEAR], level_cols))}
+{simple_table(check_rows[CHECK_YEAR].loc[families], "Forecast", family_names)}
 
-**2024 (used for choosing)**
+**2024: used for choosing**
 
-{md_table(fmt(check_rows[TUNE_YEAR], level_cols))}
-
-*Average monthly miss as % of actual imports (lower is better). Bias: total forecast compared with total actual imports
-over the year (negative = too low).*
+{simple_table(check_rows[TUNE_YEAR].loc[families], "Forecast", family_names)}
 
 ![Model comparison](figures/step4_2_model_comparison.png)
 
-1. **The linear model wins in both years.** Nationally it missed by {lin[CHECK_YEAR]['National total']:.1f}% in 2025,
-   against {simple[CHECK_YEAR]['National total']:.1f}% for the simple rule
-   ({lin[TUNE_YEAR]['National total']:.1f}% against {simple[TUNE_YEAR]['National total']:.1f}% in 2024).
-2. **The gain is modest but consistent.** It is better at every level in both years.
-3. **Much of the gain comes from getting the level right.** The simple rule's forecasts were
-   {abs(simple[CHECK_YEAR]['Bias %']):.1f}% too low over 2025, because imports were growing. The linear model's bias was
-   {signed(lin[CHECK_YEAR]['Bias %'], 1)}%.
-4. **"Same month last year" is the worst everywhere**, confirming step 3.
+1. **The linear model wins in both years, at every level.** Nationally it missed by {lin[CHECK_YEAR]['National total']:.1f}%
+   in 2025, against {simple[CHECK_YEAR]['National total']:.1f}% for the simple rule: about {improvement:.0f}% smaller.
+2. **Much of the gain comes from getting the level right.** Imports were growing, so the simple rule was
+   {abs(simple[CHECK_YEAR]['Bias %']):.1f}% too low over 2025. The linear model was {abs(lin[CHECK_YEAR]['Bias %']):.1f}% too low.
+3. **"Same month last year" is the worst in both years**, as step 3 found.
 
 ![National backtest](figures/step4_1_national_backtest.png)
+
+**Why it matters:** the gain is modest, because most of a month's ups and downs are random and no model can predict them.
+But it is consistent, and it held up on 2025, the year nothing was tuned on.
 
 ---
 
 ## 2. Why didn't the trees win?
 
-Gradient-boosted trees are often the strongest model for this kind of table, so it is worth explaining why they weren't here.
+Gradient-boosted trees are usually the strongest model for this kind of table, so it is worth explaining why they weren't here.
 
-1. **They first undershot by a lot.** Trained on absolute misses, the trees forecast each series' *median* (typical) month.
-   For lopsided series, where a few big months sit among many small ones, the median is below the average. Added up across
-   hundreds of series, the forecasts came out {abs(abs_err_tree['Bias %']):.1f}% too low in 2024. Switching to squared
-   misses, which aim at the *average*, fixed that.
-2. **Even fixed, there isn't enough history for their flexibility to pay off.** Trees can learn complicated patterns, but
-   with four or five years of noisy monthly data, most of those patterns are noise. The best tree settings were the most
-   restricted ones tried (trees with only 4 leaves). In 2025 they missed more than the linear model
-   ({trees[CHECK_YEAR][key]:.1f}% against {lin[CHECK_YEAR][key]:.1f}%), and slightly more than the simple rule
-   ({simple[CHECK_YEAR][key]:.1f}%).
+**Reason 1: set up the usual way, they forecast too low.**
+- Trained to make the plain misses as small as possible, a model forecasts the *typical* (median) month of each series.
+- In a lopsided series, a few big months sit among many small ones, so the typical month is below the average.
+- Added up over hundreds of series, the trees' forecasts came out {abs(abs_err_tree['Bias %']):.1f}% too low in 2024.
+- Training them to make the *squared* misses small instead makes them aim at the average month, which fixed it.
 
-All tree settings tried on 2024:
+**Reason 2: there isn't enough history for their flexibility to pay off.**
+- Trees can learn complicated patterns. With only four to five years of noisy monthly data, most of those patterns are noise.
+- The best trees were the most restricted ones tried, with only 4 leaves each.
+- In 2025 they still missed more than the linear model ({trees[CHECK_YEAR][key]:.1f}% against {lin[CHECK_YEAR][key]:.1f}%
+  overall), and slightly more than the simple rule ({simple[CHECK_YEAR][key]:.1f}%).
 
-{md_table(fmt(tree_rows, level_cols))}
+Every tree setup tried on 2024:
+
+{simple_table(tree_rows, "Tree setup", tree_labels)}
 
 *Tree results can differ slightly (in the first decimal place) between scikit-learn versions; the conclusions don't change.*
 
-The linear model's ridge penalty, also chosen on 2024:
+---
 
-{md_table(fmt(linear_rows, level_cols))}
+## 3. How strong should the linear model's penalty be?
 
-A stronger penalty (ridge = {ridge:g}) works best: the evidence for anything beyond "recent level plus trend" is weak, and
-the penalty keeps the model from chasing noise.
+**What we did:** tried four strengths of penalty on 2024. A stronger penalty keeps the weights smaller, so the model stays
+closer to the simple rule.
+
+{simple_table(linear_rows, "Penalty strength", linear_labels)}
+
+**What we found:** a strong penalty ({ridge:g}) works best.
+
+**Why it matters:** apart from the recent level and growth, the evidence for most clues is weak, and a strong penalty
+stops the model from chasing noise in the past data.
 
 ---
 
-## 3. Keep 2021 or not?
+## 4. Should 2021 be used?
 
-**What we did:** ran the chosen linear model on 2024 twice, once learning from 2021-2023 and once from 2022-2023.
+**What we did:** ran the chosen linear model on 2024 twice: learning from 2021-2023, and learning from 2022-2023 only.
 
-{md_table(fmt(pd.DataFrame(history_rows), level_cols))}
+{simple_table(history_df, "History used", ["2021-2023 (with 2021)", "2022-2023 (without 2021)"])}
 
-**What we found:** keeping 2021 helps. Without it, the model has only one year of history to learn from in the 2024 test,
-which isn't enough to learn about trends. 2021 stays in, with the COVID clues marking its unusual months.
+**What we found:** the model is more accurate with 2021. Without it, there is only one year of history to learn from in
+the 2024 test, which isn't enough to learn about trends.
+
+**Why it matters:** 2021 stays in. The COVID clues tell the model which of its months were unusual.
 
 ---
 
-## 4. What does the linear model rely on?
+## 5. What does the linear model rely on?
 
 ![Coefficients](figures/step4_3_coefficients.png)
 
-*From the final model, trained on 2021-2025. The {n_coef} weights include section and region adjustments, not shown.*
+*How to read the chart: each bar shows how much the forecast moves, in % of the series' average month, when that clue
+goes up by a typical amount (one standard deviation). From the final model, trained on 2021-2025. Section and region
+adjustments are not shown.*
 
-1. **A built-in growth allowance.** When every clue is at its typical value, the model forecasts {growth_allowance:.1f}%
-   above a series' average month over the last 12 months: on average, that is how much imports ran above the year before.
-   This alone fixes most of the simple rule's "too low" bias.
-2. **Recent months pull the forecast their way.** Last month and the averages of the last 3 and 6 months all push the
-   forecast in the same direction they moved.
-3. **Part of last year's change tends to unwind.** If a series was higher in the year before than recently, the forecast
-   moves up a little ({coef['prev_12'] * 100:+.1f} on the chart); if it grew fast, the forecast is pulled down a little
+1. **A built-in allowance for growth.** When every clue is at its typical value, the model forecasts {growth_allowance:.1f}%
+   above the series' average month over the last 12 months. That is roughly how much imports grew from one year to the next,
+   and it fixes most of the simple rule's "too low" problem.
+2. **Recent months pull the forecast their way.** If last month, or the last 3 or 6 months, were higher than usual, the
+   forecast goes up a little.
+3. **Part of last year's change tends to unwind.** If a series was higher in the year before than it is now, the forecast
+   goes up a little ({coef['prev_12'] * 100:+.1f} on the chart). If it grew fast, the forecast comes down a little
    ({coef['growth'] * 100:+.1f}).
-4. **The same month two years ago** carries a little seasonal memory ({coef['same_month_2y'] * 100:+.1f}).
-5. **Holidays:** a month with Eid al-Adha is about {abs(coef['eid_al_adha']) * 100:.1f}% lower, and December about
+4. **The same month two years ago** adds a little seasonal memory ({coef['same_month_2y'] * 100:+.1f}).
+5. **Holidays:** a month with Eid al-Adha is about {abs(coef['eid_al_adha']) * 100:.1f}% lower. December is about
    {coef['december'] * 100:.1f}% higher.
 
-All the adjustments are small. The ridge penalty keeps them that way, because in normal years most of a month's movement
-is noise. Several clues overlap (for example the last 3 and last 6 months), so the penalty shares the credit between them
-and individual weights should be read with care.
+**Why it matters:** all the adjustments are small, a few % at most. That is the penalty at work: in normal years most of a
+month's movement is noise, so the model only moves away from "recent level plus growth" when the evidence is clear.
+Some clues overlap (for example the last 3 and the last 6 months), so the penalty shares the credit between them, and one
+weight on its own should be read with care.
 
-**Checking the maths.** The weights can be found two ways, and both were coded from scratch:
+---
 
-1. **Normal equations:** solve one matrix equation, which gives the exact minimum in one go.
-2. **Gradient descent:** start with all weights at zero and repeatedly take a small step downhill. The step size is set
-   from the largest eigenvalue of the Hessian (how sharply the loss curves), so steps never overshoot.
+## 6. Checking the maths: two ways to find the weights
+
+The linear model's weights were found in two different ways, both coded from scratch:
+
+1. **Solve it directly ("normal equations").** The best weights satisfy one matrix equation, which can be solved in one go.
+2. **Walk downhill ("gradient descent").** Start with every weight at zero. At each step, work out which direction lowers
+   the misses fastest, and take a small step that way. Repeat.
+
+If the code is right, both should end up with the same weights.
 
 ![Gradient descent](figures/step4_4_gradient_descent.png)
 
-- With the chosen penalty, gradient descent gets within 0.1% of the exact minimum after {gd_chosen['within_0.1%']} steps, and is
-  exact to the computer's precision after {gd_chosen['exact']} steps. Its weights match the normal equations' to within
-  {gd_chosen['max_coef_diff']:.0e}.
-- With a weak penalty (ridge = {min(runs):g}), the overlapping clues make the problem harder. It also gets close quickly,
-  but after {len(gd_weak['gap'])} steps it is still {gd_weak['gap'][-1]:.0e} above the minimum, and its weights are still
-  up to {gd_weak['max_coef_diff']:.0e} off.
+**What we found:**
+
+- With the chosen penalty, walking downhill gets within 0.1% of the best answer after {gd_chosen['within_0.1%']} steps,
+  and matches it exactly (to the computer's precision) after {gd_chosen['exact']} steps.
+- With a very weak penalty ({min(runs):g}), overlapping clues make the slope shallow near the bottom, so progress slows
+  down. After {len(gd_weak['gap'])} steps it is close, but still not exact.
+
+*For readers who know the terms: the step size is 1/L, where L is the largest eigenvalue of the Hessian 2(X'WX + P), the
+safe maximum for a quadratic loss. A bigger penalty improves the conditioning of X'WX, which is why descent converges faster.*
 
 ---
 
-## 5. How far off is the model usually?
+## 7. How far off is the model usually?
 
-**What we did:** used the model's monthly misses in the 2024 and 2025 tests to set a **range** around each forecast,
-using the same idea as the normal range in step 3: the distance that 9 months out of 10 stayed within.
+**What we did:**
 
-**Does the range work?** As a fair check, ranges were first set using 2024 only, then tested on 2025:
+1. Took the model's monthly misses in the 2024 and 2025 tests, for the national total, each origin region and each section.
+2. For each total, found the distance that 9 months out of 10 stayed within. That is its **range**, the same idea as the
+   normal range in step 3.
 
-{md_table(calib_md)}
+**Does the range work?** As a fair test, ranges were first set using 2024 only, then checked against 2025:
 
-Close to the 90% target at every level, so the ranges can be trusted.
+{calib_md}
 
-**The final ranges** (set from 2024 and 2025 together), for a single month:
+Between {calib_low:.0f}% and {calib_high:.0f}% of months fell inside, close to the 90% aimed for, so the ranges can be trusted.
 
-{md_table(ranges_md)}
+**The final ranges** (set from 2024 and 2025 together):
+
+{ranges_md}
 
 *Sections range from +/-{section_ranges['range'].min() * 100:.0f}% ({section_ranges['name'].iloc[0]}) to
-+/-{section_ranges['range'].max() * 100:.0f}% ({section_ranges['name'].iloc[-1]}); all are saved in `data/interim/step4_ranges.csv`.*
++/-{section_ranges['range'].max() * 100:.0f}% ({section_ranges['name'].iloc[-1]}). All of them are saved in `data/interim/step4_ranges.csv`.*
 
-- A single month nationally can be {nat_range:.0f}% away from the forecast even in a normal year. That's bigger than the
-  average miss ({lin[CHECK_YEAR]['National total']:.1f}%), because ranges cover the unusual months too (December, for example).
-- Small or jumpy origins have wide ranges. A change there needs to be large before it counts as real.
+**Why it matters:**
+- In step 5, a 2026 month only counts as a real shortfall if it falls **outside** its range.
+- Nationally, a single month can be {nat_range:.0f}% off even in a normal year. That is bigger than the average miss
+  ({lin[CHECK_YEAR]['National total']:.1f}%), because the range has to cover the unusual months too, such as December.
+- Small or jumpy origins have wide ranges, so a change there needs to be large before it counts.
 
 ---
 
-## 6. Sanity check: January and February 2026
+## 8. Sanity check: January and February 2026
 
-The final model was retrained on 2021-2025 and forecast 2026 from the end of December 2025. The war began on 28 February,
-so January and February should look normal:
+**What we did:** retrained the model on 2021-2025 and forecast 2026 from the end of December 2025, exactly as step 5 will.
+The war began on 28 February, so January and February should look normal.
 
-{md_table(jf_nat_md)}
+{jf_nat_md}
 
-- **Nationally, both months land close to the forecast**, well inside the range.
-- For origin regions and sections, {int(jf_levels.loc[['Origin region', 'Section'], 'sum'].sum())} of
-  {int(jf_levels.loc[['Origin region', 'Section'], 'size'].sum())} region and section months were inside their range.
-  Of those outside, {n_out_above} of {len(jf_out)} were *above* the forecast, mostly in February. That could be
-  stockpiling as tensions rose before the war; step 5 will keep it in mind.
+**What we found:**
+
+1. **Nationally, both months land close to the forecast**, well inside the range.
+2. **{int(jf_detail['inside'].sum())} of {len(jf_detail)}** origin-region and section months were also inside their range.
+3. Of the {len(jf_out)} outside it, **{n_out_above} were above the forecast**, mostly in February. That could be stockpiling
+   as tensions rose before the war, which step 5 will keep in mind.
+
+**Why it matters:** the model gets the months before the war right, which supports using it for the months after.
 
 ---
 
 ## What this means for step 5
 
-1. **The linear model (ridge = {ridge:g}, trained on 2021-2025)** gives the "without the war" forecast for 2026.
-   Its forecasts are saved in `data/interim/step4_forecast_2026.parquet`.
-2. **Each month of 2026 is compared with its own forecast**, nationally, by origin region and by section.
-3. **A month counts as a real shortfall only if it falls outside the range.** The ranges are saved in `data/interim/step4_ranges.csv`.
+1. **The linear model** (strong penalty, trained on 2021-2025) gives the "without the war" forecast for each month of 2026.
+   The forecasts are saved in `data/interim/step4_forecast_2026.parquet`.
+2. **Each month of 2026 is compared with its own forecast**, for the whole country, each origin region and each section.
+3. **A month only counts as a real shortfall if it falls outside its range** (saved in `data/interim/step4_ranges.csv`).
 4. **Bulk materials and precious metals** have too few series for these models. Step 5 uses the simple rule for them,
    with their normal ranges from step 3.
 """
