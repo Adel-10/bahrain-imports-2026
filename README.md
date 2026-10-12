@@ -4,17 +4,19 @@
 
 **Approach:** train forecasting models on imports up to December 2025, forecast 2026 as if nothing had happened, and compare with what actually arrived. The same "pretend it's January" test is run on 2024 and 2025 to measure normal forecasting error, so a 2026 gap can be judged against it. Port and airport totals are used to check which routes broke.
 
-**Status:** Step 3 of 7 done (data downloaded, checked, cleaned and explored). Next: forecasting models.
+**Status:** Step 4 of 7 done (forecasting model chosen and tested). Next: measuring the 2026 shortfall.
 
 | Step | What | Status |
 |---|---|---|
 | 1 | Download and check the data | done |
 | 2 | Clean and organise | done |
 | 3 | Explore | done |
-| 4 | Forecasting models, tested on 2024 and 2025 | next |
-| 5 | Measure the 2026 shortfall | |
+| 4 | Forecasting models, tested on 2024 and 2025 | done |
+| 5 | Measure the 2026 shortfall | next |
 | 6 | Routes and recovery | |
 | 7 | Write up and publish | |
+
+Extras after step 7, if there is time: a "what if" range for how much came by road, and whether products that relied on only a few supplier countries were hit harder.
 
 ## Data
 
@@ -40,6 +42,7 @@ python src/download_data.py        # step 1: about 0.4 GB; takes a few minutes
 python src/check_downloads.py      # step 1: confirms every file is complete
 python src/build_dataset.py        # step 2: cleans and builds the analysis tables (about 20 s)
 python src/explore.py              # step 3: charts and findings in reports/ (about 10 s)
+python src/backtest.py             # step 4: trains and tests the models (about 2 minutes)
 pytest                             # tests
 ```
 
@@ -77,6 +80,18 @@ Cleaning decisions, all based on profiling the real files:
 
 ![Containers and air cargo vs goods arriving](reports/figures/step3_2_routes.png)
 
+## Step 4: the forecasting model
+
+`backtest.py` builds a training table, tests four forecasts on 2024 and 2025 as if it were January of each year, and writes `reports/step4_models.md` (details, tables and four charts).
+
+- **What is forecast:** core goods, as 663 series (one HS2 chapter from one origin region; patchy ones pooled), using clues known at the end of December: recent levels, trend, the same month in earlier years, calendar (Ramadan, Eid, December) and COVID flags.
+- **The four forecasts:** last year's average month (the simple rule), the same month last year, a ridge regression written from scratch in NumPy (normal equations and gradient descent, which agree to about 1e-15), and gradient-boosted trees (scikit-learn).
+- **Result:** the linear model wins in both test years at every level. In the 2025 final check, which wasn't used for any choices, its national miss was 5.5% against 6.2% for the simple rule. The trees didn't beat the simple rule: with four to five years of noisy monthly data their flexibility mostly fits noise. Trained on absolute error, they also undershot totals by about 5%, because they forecast medians.
+- **Ranges:** the model's misses set a "9 months out of 10" range for every national, region and section total. Set on 2024 and checked on 2025, 88-92% of months fell inside.
+- **Sanity check:** retrained on 2021-2025, the model's forecasts for January and February 2026, before the war, were within 2-4% of the actual national totals.
+
+![Model comparison](reports/figures/step4_2_model_comparison.png)
+
 ## Layout
 
 ```
@@ -90,6 +105,9 @@ src/reference.py   HS sections, product groups, analysis groups, origin regions,
 src/download_data.py, src/check_downloads.py   step 1
 src/build_dataset.py                           step 2
 src/explore.py                                 step 3
+src/features.py    series and clues for the models (step 4)
+src/models.py      simple rules, linear model from scratch, boosted trees
+src/backtest.py, src/step4_report.py           step 4
 tests/             pytest tests
 reports/           step reports (markdown) and figures/
 notebooks/

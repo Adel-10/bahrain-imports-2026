@@ -225,12 +225,13 @@ def rounded_bar(ax, start, length, centre, thickness, colour, horizontal=True, r
     y_per_px = abs(np.ptp(ax.get_ylim())) / box.height
     M, L, C, Z = Path.MOVETO, Path.LINETO, Path.CURVE3, Path.CLOSEPOLY
     codes = [M, L, C, C, L, C, C, L, Z]
+    sign = -1.0 if length < 0 else 1.0           # a negative bar grows the other way; its rounded end is still the data end
     if horizontal:
-        ra, rc = min(radius_px * x_per_px, length / 2), min(radius_px * y_per_px, thickness / 2)
+        ra, rc = sign * min(radius_px * x_per_px, abs(length) / 2), min(radius_px * y_per_px, thickness / 2)
         x0, x1, y0, y1 = start, start + length, centre - thickness / 2, centre + thickness / 2
         verts = [(x0, y0), (x1 - ra, y0), (x1, y0), (x1, y0 + rc), (x1, y1 - rc), (x1, y1), (x1 - ra, y1), (x0, y1), (x0, y0)]
     else:
-        ra, rc = min(radius_px * y_per_px, length / 2), min(radius_px * x_per_px, thickness / 2)
+        ra, rc = sign * min(radius_px * y_per_px, abs(length) / 2), min(radius_px * x_per_px, thickness / 2)
         x0, x1, y0, y1 = centre - thickness / 2, centre + thickness / 2, start, start + length
         verts = [(x1, y0), (x1, y1 - ra), (x1, y1), (x1 - rc, y1), (x0 + rc, y1), (x0, y1), (x0, y1 - ra), (x0, y0), (x1, y0)]
     ax.add_patch(PathPatch(Path(verts, codes), facecolor=colour, lw=0, zorder=3))
