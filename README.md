@@ -4,7 +4,7 @@
 
 **Approach:** train forecasting models on imports up to December 2025, forecast 2026 as if nothing had happened, and compare with what actually arrived. The same "pretend it's January" test is run on 2024 and 2025 to measure normal forecasting error, so a 2026 gap can be judged against it. Port and airport totals are used to check which routes broke.
 
-**Status:** Step 4 of 7 done (forecasting model chosen and tested). Next: measuring the 2026 shortfall.
+**Status:** Step 5 of 7 done (2026 shortfall measured). Next: routes and recovery.
 
 | Step | What | Status |
 |---|---|---|
@@ -12,8 +12,8 @@
 | 2 | Clean and organise | done |
 | 3 | Explore | done |
 | 4 | Forecasting models, tested on 2024 and 2025 | done |
-| 5 | Measure the 2026 shortfall | next |
-| 6 | Routes and recovery | |
+| 5 | Measure the 2026 shortfall | done |
+| 6 | Routes and recovery | next |
 | 7 | Write up and publish | |
 
 Extras after step 7, if there is time: a "what if" range for how much came by road, and whether products that relied on only a few supplier countries were hit harder.
@@ -43,6 +43,7 @@ python src/check_downloads.py      # step 1: confirms every file is complete
 python src/build_dataset.py        # step 2: cleans and builds the analysis tables (about 20 s)
 python src/explore.py              # step 3: charts and findings in reports/ (about 10 s)
 python src/backtest.py             # step 4: trains and tests the models (about 2 minutes)
+python src/shortfall.py            # step 5: the 2026 shortfall (about 15 s; needs step 4 first)
 pytest                             # tests
 ```
 
@@ -92,6 +93,18 @@ Cleaning decisions, all based on profiling the real files:
 
 ![Model comparison](reports/figures/step4_2_model_comparison.png)
 
+## Step 5: the 2026 shortfall
+
+`shortfall.py` compares each month of 2026 with step 4's forecast of imports without the war and writes `reports/step5_shortfall.md` (five charts). A gap only counts as a real shortfall if it is outside the model's normal range, measured in step 4's tests; longer periods get narrower ranges.
+
+- **Core goods were about BD 624 million (32%) below normal from March to July 2026**, likely between BD 539 and 710 million. The gap was -54% in March, -36% in April-May and -18% in June-July; by July (-9%) it was back inside a normal month's range.
+- **Hardest-hit products:** vehicles and transport (-62%), footwear, wood, machinery and clothing (about -40% each). Machinery and vehicles account for 64% of the money lost. Only 4 of 18 sections stayed within their normal range.
+- **Hardest-hit origins:** the Americas and East and South-East Asia (both -48%), which normally ship through the Strait of Hormuz. Goods from GCC countries held up (+8%, inside the normal range).
+- **Second opinion:** the gradient-boosted trees give the same picture (national -33%; section and region gaps within 4 points).
+- **Close-ups:** cars were still -51% in June-July, while rice and poultry bounced back above normal. Aircraft deliveries made March look about 9 points worse than everyday supply chains were.
+
+![Shortfall by month](reports/figures/step5_1_national.png)
+
 ## Layout
 
 ```
@@ -108,6 +121,7 @@ src/explore.py                                 step 3
 src/features.py    series and clues for the models (step 4)
 src/models.py      simple rules, linear model from scratch, boosted trees
 src/backtest.py, src/step4_report.py           step 4
+src/shortfall.py, src/step5_report.py          step 5
 tests/             pytest tests
 reports/           step reports (markdown) and figures/
 notebooks/

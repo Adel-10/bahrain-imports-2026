@@ -16,6 +16,25 @@ The answers set the plan for step 4.
 **What data this uses.** Imports from January 2021 to July 2026 (the latest month the portal has published).
 Port figures run to September 2026 and airport figures to August 2026, because those are published sooner.
 
+## Words used in this report
+
+| Word | What it means here |
+|---|---|
+| **Core goods** | All imports except bulk materials (iron ore, alumina, coke and construction minerals) and precious metals (gold, silver and jewellery). These are the everyday supply chains, about three-quarters of import value. |
+| **National total** (also *nationally* or *All of Bahrain*) | All core goods imports into Bahrain in a month, added together: every product from every origin, in one number. It doesn't include bulk materials or precious metals, or oil (the portal's import data covers non-oil imports only). |
+| **Normal** | The 2025 average month of the same thing. "-50%" in March means March 2026 was half an average 2025 month. |
+| **Jan-Feb, March, Apr-May, Jun-Jul** | Groups of months in 2026, by what was happening at the time (see the periods table below). |
+| **Origin region** | Where goods came from, grouped into 9 regions by how they normally reach Bahrain. **GCC** means Saudi Arabia, the UAE, Kuwait, Qatar and Oman, including the Jebel Ali and Oman free zones. |
+| **Section** | One of the 21 top-level groups of the customs (HS) code, such as "Machinery and electrical" or "Vehicles and transport". Each section is made up of HS2 chapters. |
+| **HS2 chapter, HS4 heading** | Finer levels of the customs (HS) code: 2 digits (96 chapters, for example 84 = machinery) and 4 digits (about 1,200 headings, for example 8703 = cars). |
+| **Series** | One line of monthly numbers: one HS2 chapter from one origin region, for example "chapter 84 (machinery) from Europe". |
+| **Regular series** | A series with imports in at least 54 of the 60 months of 2021-2025. |
+| **Simple rule** | The simplest forecast: every month will be like last year's average month. |
+| **Normal miss** | How far the simple rule's forecasts were from the actual values in 2024 and 2025, on average over the months, as % of the forecast (see before-you-start, step 3). |
+| **Normal range** | How far a single month strayed from the previous year's average month, 9 times out of 10, in 2023-2025 (see before-you-start, step 4). The grey band in the charts. |
+| **Containers unloaded** | Shipping containers taken off ships at Khalifa Bin Salman Port, Bahrain's container port, counted in TEUs (one TEU is one twenty-foot container). |
+| **BD m, kt** | Million Bahraini dinars (value) and thousand tonnes (weight). |
+
 ---
 
 ## Before you start: how to read the numbers

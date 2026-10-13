@@ -28,21 +28,20 @@ from matplotlib.patches import PathPatch, Rectangle
 from matplotlib.path import Path
 from matplotlib.ticker import FuncFormatter
 
+import glossary
 from build_dataset import md_table
 from config import REFERENCE_DIR, ROOT
-from reference import BULK, CORE, OTHER_REGION, PRECIOUS, add_analysis_group, add_region
+from reference import (BULK, CORE, OTHER_REGION, PRE_WAR_2026, PRECIOUS, WAR_PERIODS_2026, add_analysis_group,
+                       add_region, period_event, war_periods_2026)
 
 PROCESSED_DIR = ROOT / "data" / "processed"
 FIG_DIR = ROOT / "reports" / "figures"
 REPORT_PATH = ROOT / "reports" / "step3_exploration.md"
 
-# 2026 periods, by month (from data/reference/events.csv). The war began on 28 February.
-PRE_WAR = [1, 2]
-PERIODS = {                       # label -> months of 2026
-    "March": [3],                 # shock: Hormuz and airspace closed, port struck
-    "Apr-May": [4, 5],            # blockade: airspace reopens 8 Apr, Hormuz still closed
-    "Jun-Jul": [6, 7],            # brief partial reopening 18 Jun - 10 Jul, then closed again
-}
+# 2026 periods, by month (from data/reference/events.csv via reference.py). The war began on 28 February.
+# main() extends PERIODS when the portal has published months after July.
+PRE_WAR = PRE_WAR_2026["Jan-Feb"]
+PERIODS = dict(WAR_PERIODS_2026)  # label -> months of 2026
 POST_WAR = [m for months in PERIODS.values() for m in months]
 WAR_START = pd.Timestamp("2026-02-28")
 COVID_END = pd.Timestamp("2022-03-28")
@@ -67,7 +66,18 @@ HS4_NAMES = {
 SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
 GRID, BASELINE, SHADE = "#e1e0d9", "#c3c2b7", "#f0efec"
 BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
-PERIOD_COLOURS = dict(zip(PERIODS, [BLUE, ORANGE, AQUA]))
+PERIOD_COLOURS = dict(zip(PERIODS, [BLUE, ORANGE, AQUA, YELLOW]))
+
+
+def extend_periods(last_month: pd.Timestamp) -> None:
+    """Bring PERIODS (and the lists built from it) up to the latest month the portal has published."""
+    if last_month.year != 2026:
+        return
+    PERIODS.clear()
+    PERIODS.update(war_periods_2026(last_month.month))
+    POST_WAR[:] = [m for months in PERIODS.values() for m in months]
+    PERIOD_COLOURS.clear()
+    PERIOD_COLOURS.update(zip(PERIODS, [BLUE, ORANGE, AQUA, YELLOW]))
 
 plt.rcParams.update({
     "font.family": "sans-serif",
@@ -663,6 +673,11 @@ The answers set the plan for step 4.
 **What data this uses.** Imports from January 2021 to {ex['last_import']:%B %Y} (the latest month the portal has published).
 Port figures run to {ex['last_port']:%B %Y} and airport figures to {ex['last_air']:%B %Y}, because those are published sooner.
 
+## Words used in this report
+
+{glossary.table(3, ["core_goods", "national_total", "normal", "periods", "origin_region", "section", "hs_codes",
+                    "series", "regular", "simple_rule", "normal_miss", "normal_range", "containers", "units"])}
+
 ---
 
 ## Before you start: how to read the numbers
@@ -682,7 +697,7 @@ Every "+" or "-" number in the tables is worked out this way: the 2026 figure co
 Comparing March 2026 with March 2025 sounds more natural, but one month carries its own random ups and downs, and those
 leak into the answer. For core goods:
 
-| | 2026 | Same month in 2025 | Compared with same month | Compared with 2025 average month |
+| Month | 2026 | Same month in 2025 | Compared with same month | Compared with 2025 average month |
 |---|---|---|---|---|
 | June | {r6['2026']:,.0f} | {r6['2025']:,.0f} | {pct_vs(r6['2026'], r6['2025'])}% | {pct_vs(r6['2026'], avg25)}% |
 | July | {r7['2026']:,.0f} | {r7['2025']:,.0f} | {pct_vs(r7['2026'], r7['2025'])}% | {pct_vs(r7['2026'], avg25)}% |
@@ -692,8 +707,8 @@ so July 2026 looks worse against it. The answer depends on whether last year's m
 We also tested both methods on 2024 and 2025, two normal years: the "same month last year" method missed by more
 (section 6). So the average month is the steadier yardstick.
 
-This is only a yardstick for exploring. In step 5 each month of 2026 is compared with a **model's forecast for that
-specific month**, which can allow for growth, December peaks and Ramadan.
+This is only a yardstick for exploring. In step 5 each month of 2026 is compared with a model's forecast for that
+specific month, which can allow for growth, December peaks and Ramadan.
 
 ### Step 3: The "normal miss": how much imports wobble in a normal year
 
@@ -733,10 +748,7 @@ The months of 2026 are grouped by what was happening (dates from `data/reference
 
 | Period | What was happening |
 |---|---|
-| **Jan-Feb** | Before the war (it began on 28 February) |
-| **March** | The shock: Strait of Hormuz and Bahrain's airspace closed, Mina Salman Port struck |
-| **Apr-May** | Airspace reopened on 8 April, but Hormuz stayed closed and a US naval blockade began |
-| **Jun-Jul** | A brief, partial reopening of Hormuz from 18 June, then closed again on 11 July |
+{chr(10).join(f"| **{p}** | {period_event(p)} |" for p in period_cols)}
 
 ---
 
@@ -950,6 +962,7 @@ def main() -> int:
     calendar = pd.read_csv(REFERENCE_DIR / "calendar.csv", parse_dates=["date"])
     core = df[df["group"] == CORE]
 
+    extend_periods(df["date"].max())
     ctx: dict = {"latest_month": df["date"].max()}
     ctx["groups"] = group_summary(df)
     wg = wide(df, ["group"])

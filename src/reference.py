@@ -150,6 +150,36 @@ def add_region(df: pd.DataFrame, code_col: str = "iso2") -> pd.DataFrame:
 
 
 # ---------------------------------------------------------------------------
+# 2026 periods, by month (dates from data/reference/events.csv). The war began on
+# 28 February 2026. Months after July (when the portal publishes them) are grouped
+# automatically: the Strait of Hormuz was closed again from 11 July.
+# ---------------------------------------------------------------------------
+PRE_WAR_2026 = {"Jan-Feb": [1, 2]}
+WAR_PERIODS_2026 = {"March": [3], "Apr-May": [4, 5], "Jun-Jul": [6, 7]}
+PERIOD_EVENTS_2026 = {
+    "Jan-Feb": "Before the war (it began on 28 February)",
+    "March": "The shock: Strait of Hormuz and Bahrain's airspace closed, Mina Salman Port struck",
+    "Apr-May": "Airspace reopened on 8 April, but Hormuz stayed closed and a US naval blockade began",
+    "Jun-Jul": "A brief, partial reopening of Hormuz from 18 June, then closed again on 11 July",
+    "later": "Hormuz closed again from 11 July (still closed in October)",
+}
+
+
+def war_periods_2026(last_month: int) -> dict[str, list[int]]:
+    """The war-time periods up to `last_month` (1-12), adding one for any months after July."""
+    periods = {label: [m for m in months if m <= last_month]
+               for label, months in WAR_PERIODS_2026.items() if months[0] <= last_month}
+    if last_month >= 8:
+        label = "Aug" if last_month == 8 else f"Aug-{pd.Timestamp(2026, last_month, 1):%b}"
+        periods[label] = list(range(8, last_month + 1))
+    return periods
+
+
+def period_event(label: str) -> str:
+    return PERIOD_EVENTS_2026.get(label, PERIOD_EVENTS_2026["later"])
+
+
+# ---------------------------------------------------------------------------
 # Monthly calendar features.
 # Ramadan and Eid dates come from the Umm al-Qura calendar (hijridate); Bahrain's
 # announced dates can differ by a day, which doesn't matter at monthly level.

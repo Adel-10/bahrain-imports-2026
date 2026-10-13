@@ -20,13 +20,20 @@ forecasting models to make that estimate. Before trusting them with 2026, each m
 
 | Word | What it means here |
 |---|---|
+| **Core goods** | All imports except bulk materials (iron ore, alumina, coke and construction minerals) and precious metals (gold, silver and jewellery). These are the everyday supply chains, about three-quarters of import value. |
+| **National total** (also *nationally* or *All of Bahrain*) | All core goods imports into Bahrain in a month, added together: every product from every origin, in one number. It doesn't include bulk materials or precious metals, or oil (the portal's import data covers non-oil imports only). |
+| **Origin region** | Where goods came from, grouped into 9 regions by how they normally reach Bahrain. **GCC** means Saudi Arabia, the UAE, Kuwait, Qatar and Oman, including the Jebel Ali and Oman free zones. |
+| **Section** | One of the 21 top-level groups of the customs (HS) code, such as "Machinery and electrical" or "Vehicles and transport". Each section is made up of HS2 chapters. |
 | **Series** | One line of monthly numbers: one HS2 chapter from one origin region, for example "chapter 84 (machinery) from Europe". |
+| **Normal year** | A year without a major shock to imports. Here that means 2024 and 2025, the years used to test the models. |
+| **Simple rule** | The simplest forecast: every month will be like last year's average month. |
 | **Clue** | A piece of information the model uses to make a forecast, such as "the average of the last 3 months". Machine learning calls these *features*. |
 | **Weight** | How much the linear model counts each clue. Machine learning calls these *coefficients*. |
-| **Miss** | How far a forecast was from what actually arrived, ignoring whether it was too high or too low. Averaged over the months and shown as % of actual imports. Lower is better. |
-| **Overall score** | The average of the miss for the national total, for origin regions and for sections, the three levels step 5 reports. Used to pick the winner. |
-| **Total for the year** | Whether the forecasts added up over the whole year were too low or too high. |
-| **Range** | How far from the forecast a single month can be in a normal year: 9 months out of 10 stay inside it. |
+| **Miss** | How far a forecast was from what actually arrived, ignoring whether it was too high or too low. Averaged over the months and shown as % of actual imports. Lower is better. (Step 3's "normal miss" divided by the forecast instead; see before-you-start, step 5.) |
+| **Overall score** | The average of the miss for the national total, for origin regions and for sections: the three levels step 5 reports. Used to pick the winner. |
+| **Total for the year** | Whether the forecasts, added up over the whole year, were too low or too high. |
+| **Range** | How far from the model's forecast a single month can be in a normal year: 9 months out of 10 stay inside it. |
+| **BD m, kt** | Million Bahraini dinars (value) and thousand tonnes (weight). |
 
 ---
 
@@ -314,12 +321,48 @@ The war began on 28 February, so January and February should look normal.
 
 **Why it matters:** the model gets the months before the war right, which supports using it for the months after.
 
+### Extra check: every forecast on January-February 2026 (for information only)
+
+Trees need a lot of history, so we also tested every forecast with all five years (2021-2025) to learn from, on the only
+2026 months before the war:
+
+| Forecast | National | By origin region | By section | Overall score | Total for the two months |
+|---|---|---|---|---|---|
+| Simple rule | 6.4% | 10.4% | 11.6% | 9.5% | 6.4% too low |
+| Same month last year | 10.9% | 13.8% | 18.1% | 14.3% | 10.9% too low |
+| **Linear model (chosen)** | 2.8% | 8.0% | 11.2% | 7.3% | 2.8% too low |
+| Trees: Aims at the typical month, big trees | 7.2% | 11.3% | 14.8% | 11.1% | 7.2% too low |
+| Trees: Aims at the average month (Poisson method), medium trees | 2.0% | 9.6% | 11.9% | 7.8% | 0.4% too high |
+| Trees: Aims at the average month (squared-miss method), medium trees | 2.1% | 9.7% | 11.5% | 7.8% | 0.6% too high |
+| Trees: Aims at the average month (squared-miss method), very small trees, less weight on the biggest series (chosen) | 2.3% | 7.8% | 11.2% | 7.1% | 2.3% too low |
+
+With five years of history, the best trees did about as well as the linear model. Across all three tests, though, more
+history doesn't steadily favour the trees:
+
+| Test | Years of history to learn from | Linear model (overall score) | Best trees (overall score) |
+|---|---|---|---|
+| 2024 | 3 | 9.6% | 9.8% |
+| 2025 | 4 | 9.9% | 10.8% |
+| January-February 2026 | 5 | 7.3% | 7.1% |
+
+This check is **not used to change the choice**, for four reasons:
+
+1. **Two months is too few.** A difference of a few tenths of a percent over two months is well within normal noise.
+2. **February may not be a normal month.** The war began on 28 February, and several totals were higher than expected
+   (possibly stockpiling).
+3. **It would use up the independent check.** Right now January-February is a clean test the model was never tuned on.
+4. **Picking the best of several setups on a small test flatters the winner.** One of them will come out on top by luck.
+
+Instead, step 5 uses the linear model for the main results and the best trees as a **second opinion**. If both models
+tell the same story about 2026, the findings are stronger. If they disagree somewhere, that is reported.
+
 ---
 
 ## What this means for step 5
 
 1. **The linear model** (strong penalty, trained on 2021-2025) gives the "without the war" forecast for each month of 2026.
-   The forecasts are saved in `data/interim/step4_forecast_2026.parquet`.
+   The forecasts are saved in `data/interim/step4_forecast_2026.parquet`. The best trees' forecasts, the second opinion,
+   are saved alongside them.
 2. **Each month of 2026 is compared with its own forecast**, for the whole country, each origin region and each section.
 3. **A month only counts as a real shortfall if it falls outside its range** (saved in `data/interim/step4_ranges.csv`).
 4. **Bulk materials and precious metals** have too few series for these models. Step 5 uses the simple rule for them,

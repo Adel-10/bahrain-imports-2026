@@ -63,3 +63,13 @@ def test_gap_and_normal_swing():
     assert swing["flat"] == pytest.approx(0.0)
     assert swing["jumpy"] == pytest.approx(50.0)
     assert months_of(w, 2026).shape[1] == 7
+
+
+def test_glossary_tables_use_known_terms():
+    import glossary
+    for step, keys in {3: ["core_goods", "national_total", "normal", "normal_miss", "normal_range", "containers"],
+                       4: ["national_total", "normal_year", "miss", "overall_score"],
+                       5: ["forecast", "normal", "gap", "normal_range", "since_war"]}.items():
+        table = glossary.table(step, keys)
+        assert table.count("\n") == len(keys) + 1
+    assert "**National total** (also *nationally* or *All of Bahrain*)" in glossary.table(5, ["national_total"])

@@ -12,8 +12,9 @@ each month of 2024 using only data up to then; the same is repeated for 2025.
   4. 2026: the chosen model is retrained on 2021-2025 and forecasts 2026. Only January
      and February (before the war) are checked here; step 5 uses the rest.
 
-Writes reports/step4_models.md, four charts in reports/figures/, and the 2026 forecasts
-and ranges in data/interim/ for step 5.
+Writes reports/step4_models.md, four charts in reports/figures/, and for step 5 (in data/interim/):
+the 2026 forecasts of the chosen model and of the best trees (a second opinion), their ranges,
+and their 2024-2025 test forecasts.
 """
 
 from __future__ import annotations
@@ -165,12 +166,37 @@ def coverage(errors: pd.DataFrame, ranges: pd.DataFrame) -> pd.DataFrame:
 
 
 def forecast_2026(core, calendar, choice: dict):
-    """Retrain the chosen model on 2021-2025 and forecast 2026 from the end of December 2025."""
+    """Retrain on 2021-2025 and forecast 2026 from the end of December 2025.
+
+    Returns the chosen model and its forecasts, the best trees and theirs (the "second opinion"
+    step 5 uses), the training table, and every candidate's score on January-February 2026.
+    That last score is for information only: it is not used to choose anything.
+    """
     panel, train, test = fold_tables(core, calendar, FORECAST_YEAR, first_year=choice["first_year"])
-    params = choice["best"][choice["winner"]]
-    model = (LinearModel if choice["winner"] == "Linear" else BoostedTrees)(**params).fit(train)
+    winner_params = choice["best"][choice["winner"]]
+    model = (LinearModel if choice["winner"] == "Linear" else BoostedTrees)(**winner_params).fit(train)
+    trees = BoostedTrees(**choice["best"]["Trees"]).fit(train)
     frame = forecasts_frame(panel, test, model.predict(test))
-    return model, frame, train
+    frame_trees = forecasts_frame(panel, test, trees.predict(test))
+
+    pre_war = test[test["target_month"].dt.month.isin([1, 2])].reset_index(drop=True)
+    candidates = [("Simple rule", SimpleAverage(), {}), ("Same month", SameMonth(), {}),
+                  ("Linear", model, winner_params)]
+    candidates += [("Trees", BoostedTrees(**p).fit(train), p) for p in TREE_GRID]
+    jan_feb = []
+    for family, m, params in candidates:
+        scored = score(forecasts_frame(panel, pre_war, m.predict(pre_war)))
+        jan_feb.append({"family": family, "settings": describe(params), "params": params, **scored})
+    return model, frame, frame_trees, train, pd.DataFrame(jan_feb)
+
+
+def backtest_predictions(frames: dict, keys: dict) -> pd.DataFrame:
+    """The 2024 and 2025 test forecasts of the chosen models, kept for step 5's ranges."""
+    parts = []
+    for year, by_key in frames.items():
+        for label, key in keys.items():
+            parts.append(by_key[key].assign(model=label, year=year))
+    return pd.concat(parts, ignore_index=True)
 
 
 def main() -> int:
@@ -187,18 +213,25 @@ def main() -> int:
 
     print("3/4 Ranges ...", flush=True)
     winner_key = (choice["winner"], describe(choice["best"][choice["winner"]]))
+    trees_key = ("Trees", describe(choice["best"]["Trees"]))
     errors = {year: aggregate_errors(frames[year][winner_key]) for year in (TUNE_YEAR, CHECK_YEAR)}
     calib = coverage(errors[CHECK_YEAR], ranges_from(errors[TUNE_YEAR]))
     ranges = ranges_from(pd.concat(errors.values()))
+    ranges_trees = ranges_from(pd.concat(aggregate_errors(frames[y][trees_key]) for y in (TUNE_YEAR, CHECK_YEAR)))
 
     print("4/4 Forecast for 2026 ...", flush=True)
-    model, frame26, train26 = forecast_2026(core, calendar, choice)
+    model, frame26, frame26_trees, train26, jan_feb = forecast_2026(core, calendar, choice)
     INTERIM_DIR.mkdir(parents=True, exist_ok=True)
     frame26.to_parquet(INTERIM_DIR / "step4_forecast_2026.parquet", index=False)
+    frame26_trees.to_parquet(INTERIM_DIR / "step4_forecast_2026_trees.parquet", index=False)
     ranges.to_csv(INTERIM_DIR / "step4_ranges.csv", index=False)
+    ranges_trees.to_csv(INTERIM_DIR / "step4_ranges_trees.csv", index=False)
+    backtest_predictions(frames, {"linear": winner_key, "trees": trees_key}).to_parquet(
+        INTERIM_DIR / "step4_backtest.parquet", index=False)
 
     results = {"tuning": tuning, "choice": choice, "check": check, "frames": frames, "errors": errors,
-               "calibration": calib, "ranges": ranges, "model": model, "forecast_2026": frame26, "train_2026": train26}
+               "calibration": calib, "ranges": ranges, "model": model, "forecast_2026": frame26,
+               "train_2026": train26, "jan_feb_all": jan_feb}
     import step4_report                                   # charts and report live in their own module
     step4_report.write(results, core, calendar)
     print(f"Done in {time.time() - t0:.0f}s. Wrote {REPORT_PATH.relative_to(ROOT)}")

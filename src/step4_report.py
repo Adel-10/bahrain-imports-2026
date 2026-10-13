@@ -10,6 +10,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 
 from backtest import (CHECK_YEAR, LEVELS, RANGE_COVERAGE, REPORT_LEVELS, REPORT_PATH, TUNE_YEAR, aggregate_errors,
                       describe, totals)
+import glossary
 from build_dataset import md_table
 from explore import (AQUA, BASELINE, BLUE, INK, INK2, MUTED, ORANGE, SURFACE, YELLOW, add_axes, dot_handle, end_dot,
                      end_labels, legend, line_handle, month_axis, new_figure, rounded_bar, save, source_note, tidy)
@@ -245,18 +246,35 @@ def write(results: dict, core: pd.DataFrame, calendar: pd.DataFrame) -> None:
     family_names = ["Simple rule (last year's average month)", "Same month last year", "**Linear model**",
                     "Gradient-boosted trees"]
 
-    tree_rows = tune_main[tune_main["family"] == "Trees"]
-    tree_labels = []
-    for params in tree_rows["params"]:
+    def tree_label(params: dict) -> str:
         aim = {"absolute_error": "typical month", "poisson": "average month (Poisson method)",
                "squared_error": "average month (squared-miss method)"}.get(params["loss"], params["loss"])
         size = {31: "big", 15: "medium", 4: "very small"}.get(params["max_leaf_nodes"], f"{params['max_leaf_nodes']}-leaf")
         label = f"Aims at the {aim}, {size} trees"
         if params.get("weight_power", 1.0) < 1:
             label += ", less weight on the biggest series"
-        if params == best["Trees"]:
-            label = f"**{label} (chosen)**"
-        tree_labels.append(label)
+        return f"**{label} (chosen)**" if params == best["Trees"] else label
+
+    tree_rows = tune_main[tune_main["family"] == "Trees"]
+    tree_labels = [tree_label(p) for p in tree_rows["params"]]
+
+    jf_all = results["jan_feb_all"]
+    jf_labels = []
+    for family, params in zip(jf_all["family"], jf_all["params"]):
+        if family == "Trees":
+            jf_labels.append("Trees: " + tree_label(params).replace("**", ""))
+        else:
+            jf_labels.append({"Simple rule": "Simple rule", "Same month": "Same month last year",
+                              "Linear": "**Linear model (chosen)**"}[family])
+    jf_lin = jf_all[jf_all["family"] == "Linear"].iloc[0]
+    jf_best_tree = jf_all[(jf_all["family"] == "Trees")
+                          & (jf_all["settings"] == describe(best["Trees"]))].iloc[0]
+    history_md = md_table(pd.DataFrame({
+        "Test": ["2024", "2025", "January-February 2026"],
+        "Years of history to learn from": [3, 4, 5],
+        "Linear model (overall score)": [f"{lin[TUNE_YEAR][key]:.1f}%", f"{lin[CHECK_YEAR][key]:.1f}%", f"{jf_lin[key]:.1f}%"],
+        "Best trees (overall score)": [f"{trees[TUNE_YEAR][key]:.1f}%", f"{trees[CHECK_YEAR][key]:.1f}%", f"{jf_best_tree[key]:.1f}%"],
+    }))
     abs_err_tree = tree_rows[tree_rows["settings"].str.contains("absolute_error")].iloc[0]
 
     linear_rows = tune_main[tune_main["family"] == "Linear"]
@@ -333,15 +351,8 @@ forecasting models to make that estimate. Before trusting them with 2026, each m
 
 ## Words used in this report
 
-| Word | What it means here |
-|---|---|
-| **Series** | One line of monthly numbers: one HS2 chapter from one origin region, for example "chapter 84 (machinery) from Europe". |
-| **Clue** | A piece of information the model uses to make a forecast, such as "the average of the last 3 months". Machine learning calls these *features*. |
-| **Weight** | How much the linear model counts each clue. Machine learning calls these *coefficients*. |
-| **Miss** | How far a forecast was from what actually arrived, ignoring whether it was too high or too low. Averaged over the months and shown as % of actual imports. Lower is better. |
-| **Overall score** | The average of the miss for the national total, for origin regions and for sections, the three levels step 5 reports. Used to pick the winner. |
-| **Total for the year** | Whether the forecasts added up over the whole year were too low or too high. |
-| **Range** | How far from the forecast a single month can be in a normal year: 9 months out of 10 stay inside it. |
+{glossary.table(4, ["core_goods", "national_total", "origin_region", "section", "series", "normal_year", "simple_rule",
+                    "clue", "weight", "miss", "overall_score", "total_for_year", "range", "units"])}
 
 ---
 
@@ -588,12 +599,36 @@ The war began on 28 February, so January and February should look normal.
 
 **Why it matters:** the model gets the months before the war right, which supports using it for the months after.
 
+### Extra check: every forecast on January-February 2026 (for information only)
+
+Trees need a lot of history, so we also tested every forecast with all five years (2021-2025) to learn from, on the only
+2026 months before the war:
+
+{simple_table(jf_all, "Forecast", jf_labels).replace("Total for the year", "Total for the two months")}
+
+With five years of history, the best trees did about as well as the linear model. Across all three tests, though, more
+history doesn't steadily favour the trees:
+
+{history_md}
+
+This check is **not used to change the choice**, for four reasons:
+
+1. **Two months is too few.** A difference of a few tenths of a percent over two months is well within normal noise.
+2. **February may not be a normal month.** The war began on 28 February, and several totals were higher than expected
+   (possibly stockpiling).
+3. **It would use up the independent check.** Right now January-February is a clean test the model was never tuned on.
+4. **Picking the best of several setups on a small test flatters the winner.** One of them will come out on top by luck.
+
+Instead, step 5 uses the linear model for the main results and the best trees as a **second opinion**. If both models
+tell the same story about 2026, the findings are stronger. If they disagree somewhere, that is reported.
+
 ---
 
 ## What this means for step 5
 
 1. **The linear model** (strong penalty, trained on 2021-2025) gives the "without the war" forecast for each month of 2026.
-   The forecasts are saved in `data/interim/step4_forecast_2026.parquet`.
+   The forecasts are saved in `data/interim/step4_forecast_2026.parquet`. The best trees' forecasts, the second opinion,
+   are saved alongside them.
 2. **Each month of 2026 is compared with its own forecast**, for the whole country, each origin region and each section.
 3. **A month only counts as a real shortfall if it falls outside its range** (saved in `data/interim/step4_ranges.csv`).
 4. **Bulk materials and precious metals** have too few series for these models. Step 5 uses the simple rule for them,

@@ -52,31 +52,40 @@ class Panel:
 
 
 def load_core() -> pd.DataFrame:
-    """Core goods rows with section, HS2 chapter, origin region, month and value."""
-    cols = ["date", "section_id", "product_group", "hs2", "iso2", "value_bd"]
+    """Core goods rows with section, HS2 chapter, HS4 heading, origin region, month and value."""
+    cols = ["date", "section_id", "product_group", "hs2", "hs4", "iso2", "value_bd"]
     df = pd.read_parquet(PROCESSED_DIR / "imports_clean.parquet", columns=cols)
     add_analysis_group(df)
     add_region(df)
     core = df[df["group"] == CORE]
-    return core[["date", "section_id", "hs2", "region", "value_bd"]].assign(
-        hs2=core["hs2"].astype(str), region=core["region"].astype(str))
+    return core[["date", "section_id", "hs2", "hs4", "region", "value_bd"]].assign(
+        hs2=core["hs2"].astype(str), hs4=core["hs4"].astype(str), region=core["region"].astype(str))
 
 
 def load_calendar() -> pd.DataFrame:
     return pd.read_csv(REFERENCE_DIR / "calendar.csv", parse_dates=["date"]).set_index("date")
 
 
-def build_panel(core: pd.DataFrame, first_month: str, last_history_month: str, last_month: str) -> Panel:
+ALL_ORIGINS = "All origins"
+
+
+def build_panel(core: pd.DataFrame, first_month: str, last_history_month: str, last_month: str,
+                product: str = "hs2", by_region: bool = True) -> Panel:
     """Series x month panel from `first_month` to `last_month`.
 
-    Which series stand alone is decided using only months up to `last_history_month`
-    (what would have been known at forecast time). Patchy series are pooled into an
-    "other" series for their section and region.
+    A series is one `product` code (HS2 chapter by default, or HS4 heading) from one origin
+    region, or from all origins together when `by_region` is False. Which series stand
+    alone is decided using only months up to `last_history_month` (what would have been
+    known at forecast time). Patchy series are pooled into an "other" series for their
+    section and region.
     """
     months = pd.date_range(first_month, last_month, freq="MS")
     data = core[(core["date"] >= months[0]) & (core["date"] <= months[-1])]
-    wide = (data.groupby(["section_id", "region", "hs2", "date"], observed=True)["value_bd"].sum()
+    if not by_region:
+        data = data.assign(region=ALL_ORIGINS)
+    wide = (data.groupby(["section_id", "region", product, "date"], observed=True)["value_bd"].sum()
             .unstack("date", fill_value=0.0).reindex(columns=months, fill_value=0.0))
+    wide.index = wide.index.rename(["section_id", "region", "hs2"])     # the product column is called hs2 below
     history = wide.loc[:, wide.columns <= pd.Timestamp(last_history_month)]
     regular = (history > 0).sum(axis=1) >= np.ceil(REGULAR_SHARE * history.shape[1])
 
@@ -88,8 +97,11 @@ def build_panel(core: pd.DataFrame, first_month: str, last_history_month: str, l
 
     info = both.index.to_frame(index=False)
     info["series_id"] = info["hs2"].where(info["hs2"] != "other", "other-s" + info["section_id"].astype(str)) + " | " + info["region"]
-    info["region_id"] = info["region"].map({r: i for i, r in enumerate(REGIONS)}).astype(int)
-    info["hs2_id"] = info["hs2"].map(lambda h: 0 if h == "other" else int(h)).astype(int)
+    info["region_id"] = info["region"].map({r: i for i, r in enumerate([*REGIONS, ALL_ORIGINS])}).astype(int)
+    info["hs2_id"] = info["hs2"].map(lambda h: 0 if h == "other" else int(h[:2])).astype(int)
+    if product != "hs2":
+        info = info.rename(columns={"hs2": product})
+        info["hs2"] = info[product].map(lambda h: "other" if h == "other" else h[:2])
     return Panel(values=both.to_numpy(dtype=float), months=months, info=info)
 
 
@@ -162,7 +174,8 @@ def make_examples(panel: Panel, calendar: pd.DataFrame, origins: list[pd.Timesta
 
 
 def fold_tables(core: pd.DataFrame, calendar: pd.DataFrame, test_year: int, first_year: int = 2021,
-                last_month: str | None = None) -> tuple[Panel, pd.DataFrame, pd.DataFrame]:
+                last_month: str | None = None, product: str = "hs2",
+                by_region: bool = True) -> tuple[Panel, pd.DataFrame, pd.DataFrame]:
     """Panel, training table and test table for one "pretend it's January of `test_year`" run.
 
     Training rows use every month-end origin whose targets fall before `test_year`.
@@ -172,7 +185,8 @@ def fold_tables(core: pd.DataFrame, calendar: pd.DataFrame, test_year: int, firs
     last_month = last_month or f"{test_year}-12-01"
     available = core["date"].max()
     last_month = min(pd.Timestamp(last_month), available)
-    panel = build_panel(core, f"{first_year}-01-01", end_of_history.strftime("%Y-%m-%d"), last_month.strftime("%Y-%m-%d"))
+    panel = build_panel(core, f"{first_year}-01-01", end_of_history.strftime("%Y-%m-%d"), last_month.strftime("%Y-%m-%d"),
+                        product=product, by_region=by_region)
     first_origin = pd.Timestamp(f"{first_year}-12-01")
     train_origins = list(pd.date_range(first_origin, end_of_history - pd.DateOffset(months=1), freq="MS"))
     train = make_examples(panel, calendar, train_origins, last_target=end_of_history)
