@@ -66,15 +66,17 @@ def name_of(level: str, name: str) -> str:
     return SECTION_NAMES.get(int(name), name) if level == "Section" else name
 
 
-def window_ranges(backtest: pd.DataFrame, lengths: set[int]) -> pd.DataFrame:
+def window_ranges(backtest: pd.DataFrame, lengths: set[int], totals=aggregate_errors) -> pd.DataFrame:
     """Range for a k-month total, for every reported total and every k in `lengths`.
 
     From the 2024 and 2025 tests: take every run of k consecutive months, compare the model's
     total with the actual total, and find the distance that 9 runs out of 10 stayed within.
+    `totals` turns series forecasts into the reported totals (columns level, name, target_month,
+    actual, forecast); step 6 passes its own groupings.
     """
     rows = []
     for _, frame in backtest.groupby("year"):
-        errors = aggregate_errors(frame).sort_values("target_month")
+        errors = totals(frame).sort_values("target_month")
         for (level, name), g in errors.groupby(["level", "name"]):
             for k in lengths:
                 a = g["actual"].rolling(k).sum()
@@ -85,9 +87,9 @@ def window_ranges(backtest: pd.DataFrame, lengths: set[int]) -> pd.DataFrame:
     return df.groupby(["level", "name", "months"])["abs_error"].quantile(COVERAGE).rename("range").reset_index()
 
 
-def period_gaps(frame: pd.DataFrame, ranges: pd.DataFrame, periods: dict) -> pd.DataFrame:
+def period_gaps(frame: pd.DataFrame, ranges: pd.DataFrame, periods: dict, totals=aggregate_errors) -> pd.DataFrame:
     """Gap for every reported total and period: BD, % of forecast, its range, and whether it is outside."""
-    totals = aggregate_errors(frame)
+    totals = totals(frame)
     rows = []
     for label, months in periods.items():
         part = totals[totals["target_month"].dt.month.isin(months) & (totals["target_month"].dt.year == 2026)]

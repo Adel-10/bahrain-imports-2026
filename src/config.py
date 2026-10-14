@@ -24,7 +24,8 @@ class Dataset:
     dataset_id: str     # the portal's id for the dataset
     kind: str           # "imports" (product x country x month) or "route" (national monthly totals)
     year: int | None    # imports are published as one file per year
-    rows_seen: int      # row count on the portal when checked on 2026-10-11
+    rows_seen: int      # row count on the portal when checked
+    checked: str = "2026-10-11"   # the date rows_seen was checked
 
 
 DATASETS: list[Dataset] = [
@@ -37,6 +38,10 @@ DATASETS: list[Dataset] = [
     Dataset("port_containers", "01-container-statistics-at-khalifa-bin-salman-port", "route", None, 460),
     Dataset("port_vessels", "02-vessel-traffic-statistics-at-khalifa-bin-salman-port", "route", None, 368),
     Dataset("airport_cargo", "02-caa-monthly-air-cargo-movement-at-bahrain-international-airport", "route", None, 144),
+    # Added in step 6: car-carrier (roll-on/roll-off) vehicles and general cargo at the same port.
+    Dataset("port_roro", "03-roro-units-statistics-at-khalifa-bin-salman-port", "route", None, 93, "2026-10-13"),
+    Dataset("port_general_cargo", "04-general-cargo-volume-statistics-at-khalifa-bin-salman-port", "route", None, 93,
+            "2026-10-13"),
 ]
 
 DATASETS_BY_NAME = {d.name: d for d in DATASETS}
@@ -72,4 +77,8 @@ REFERENCE_ROUTE_POINTS: list[tuple[str, str, int, tuple[int, ...], float]] = [
     ("port_vessels", "Total Vessel Visit", 2026, (3, 4, 5, 6, 7), 191),
     ("airport_cargo", "Import Cargo & Mail (In Tonnes)", 2025, (12,), 14_187),
     ("airport_cargo", "Import Cargo & Mail (In Tonnes)", 2026, (3,), 129),
+    ("port_roro", "roro_units_vehicles", 2025, (1,), 5_365),
+    ("port_roro", "roro_units_vehicles", 2026, (3,), 609),
+    ("port_general_cargo", "general_cargo_volume_ft", 2025, (2,), 105_028),
+    ("port_general_cargo", "general_cargo_volume_ft", 2026, (6,), 112_609),
 ]

@@ -4,7 +4,7 @@
 
 **Approach:** train forecasting models on imports up to December 2025, forecast 2026 as if nothing had happened, and compare with what actually arrived. The same "pretend it's January" test is run on 2024 and 2025 to measure normal forecasting error, so a 2026 gap can be judged against it. Port and airport totals are used to check which routes broke.
 
-**Status:** Step 5 of 7 done (2026 shortfall measured). Next: routes and recovery.
+**Status:** Step 6 of 7 done (routes and adapting). Next: write up and publish.
 
 | Step | What | Status |
 |---|---|---|
@@ -13,8 +13,8 @@
 | 3 | Explore | done |
 | 4 | Forecasting models, tested on 2024 and 2025 | done |
 | 5 | Measure the 2026 shortfall | done |
-| 6 | Routes and recovery | next |
-| 7 | Write up and publish | |
+| 6 | Routes and adapting | done |
+| 7 | Write up and publish | next |
 
 Extras after step 7, if there is time: a "what if" range for how much came by road, and whether products that relied on only a few supplier countries were hit harder.
 
@@ -28,6 +28,8 @@ All data comes from the [Bahrain Open Data Portal](https://www.data.gov.bh) (Inf
 | `port_containers.csv` | Monthly containers (TEUs) at Khalifa Bin Salman Port, by type | 2019 onwards |
 | `port_vessels.csv` | Monthly ship visits at Khalifa Bin Salman Port, by type | 2019 onwards |
 | `airport_cargo.csv` | Monthly air cargo (tonnes) at Bahrain International Airport | 2023 onwards |
+| `port_roro.csv` | Monthly vehicles unloaded from car carriers (roll-on/roll-off) at Khalifa Bin Salman Port | 2019 onwards |
+| `port_general_cargo.csv` | Monthly general cargo (freight tonnes) at Khalifa Bin Salman Port | 2019 onwards |
 
 `data/reference/events.csv` lists verified dates of the events used to label periods (COVID restrictions, the 2026 conflict, the Strait of Hormuz closure, airspace closure and reopening, causeway closures), each with a source link.
 
@@ -44,6 +46,7 @@ python src/build_dataset.py        # step 2: cleans and builds the analysis tabl
 python src/explore.py              # step 3: charts and findings in reports/ (about 10 s)
 python src/backtest.py             # step 4: trains and tests the models (about 2 minutes)
 python src/shortfall.py            # step 5: the 2026 shortfall (about 15 s; needs step 4 first)
+python src/routes.py               # step 6: routes and adapting (about 15 s; needs step 4 first)
 pytest                             # tests
 ```
 
@@ -58,7 +61,7 @@ If a download fails, run `download_data.py` again: it skips files it already has
 | File | One row per | Main columns |
 |---|---|---|
 | `data/processed/imports_clean.parquet` | month x 8-digit product x origin country (1.76M rows) | `date`, `hs8`/`hs6`/`hs4`/`hs2`, `section_name`, `product_group`, `commodity_en`, `iso2`, `country_en`, `value_bd`, `weight_kg`, `quantity`, `unit`, `n_shipments`, quality flags |
-| `data/processed/route_monthly.parquet` | month | port containers by type (TEUs), ship visits by type, air cargo tonnes |
+| `data/processed/route_monthly.parquet` | month | port containers by type (TEUs), ship visits by type, vehicles from car carriers, general cargo (freight tonnes), air cargo tonnes |
 | `data/reference/calendar.csv` | month, 2019-2027 | `ramadan_days`, `eid_al_fitr`, `eid_al_adha`, `covid_restrictions`, `covid_closure_days` |
 | `data/reference/hs_sections.csv` | HS chapter | section number and name |
 
@@ -66,6 +69,7 @@ Cleaning decisions, all based on profiling the real files:
 - Separate shipments of the same product from the same country in the same month are added together (6 cases). Monthly totals are checked to be identical before and after.
 - Odd rows (zero weight, zero or negative value, value per kg above 100,000 BD) are flagged, not dropped, so totals still match the official figures.
 - **Bulk raw materials are labelled** in `product_group`: iron ore, alumina, coke and construction minerals are about 85% of import weight but under 22% of value. Weight-based analysis must separate them from general goods.
+- **Port general cargo figures repaired.** Several 2026 months were typed with a decimal point for a thousands separator (56.186 for 56,186); they are multiplied by 1,000 and marked in `port_general_cargo_note`. March 2026, recorded as 0 although 17 general cargo ships called, is treated as missing.
 - **Models will work at 4-digit level or coarser.** The HS 2022 revision added 722 new 8-digit codes carrying 2.7% of 2022's value; at 4-digit level code changes affect at most 0.12% of value in any year.
 
 ## Step 3: what the data shows
@@ -105,6 +109,17 @@ Cleaning decisions, all based on profiling the real files:
 
 ![Shortfall by month](reports/figures/step5_1_national.png)
 
+## Step 6: routes and adapting
+
+`routes.py` compares the port and airport figures for 2026 with the same months of 2025, repeats step 5's comparison for goods that depend on different routes, and works out by elimination how much must have come by road. It writes `reports/step6_routes.md` (four charts).
+
+- **Routes cut:** containers unloaded at the port ran at about a third of normal from March to July; car carriers unloaded no vehicles at all from April to September; air cargo was almost zero in March and about 70% of normal by June-July.
+- **Goods with another way in held up.** Goods from GCC countries, which can come by road, were +8% against the forecast (inside the normal range) and +19% in June-July. Goods from beyond the Middle East were -40%. In April-May, with the airspace open but Hormuz shut, light goods from beyond the Middle East were -13% (leaving out aircraft engines) against -54% for heavy goods.
+- **Elimination:** container ships and planes could have carried at most 46% of core goods by weight from March to July, so at least 54% (about 660 thousand tonnes) came over the King Fahd Causeway or by general cargo ship. Cars from East Asia and Europe kept arriving from May with no car carriers calling.
+- **Adapting:** imports had come back about two-thirds of the way by June-July (from 46% of normal to 82%). Vehicles, clothing, East Asia and the Americas lagged. After Hormuz closed again on 11 July, containers unloaded still rose to 47% of normal in August-September.
+
+![Elimination](reports/figures/step6_3_elimination.png)
+
 ## Layout
 
 ```
@@ -122,6 +137,8 @@ src/features.py    series and clues for the models (step 4)
 src/models.py      simple rules, linear model from scratch, boosted trees
 src/backtest.py, src/step4_report.py           step 4
 src/shortfall.py, src/step5_report.py          step 5
+src/routes.py, src/step6_report.py             step 6
+src/glossary.py    plain-language definitions shared by the reports
 tests/             pytest tests
 reports/           step reports (markdown) and figures/
 notebooks/

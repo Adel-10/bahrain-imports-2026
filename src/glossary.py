@@ -1,4 +1,4 @@
-"""Plain-language definitions shared by the step 3, 4 and 5 reports.
+"""Plain-language definitions shared by the step 3 to 6 reports.
 
 Each report picks the terms it uses, so the same word always has the same definition.
 Where a word means something slightly different in one step (for example "normal"),
@@ -151,6 +151,76 @@ STEP_TERMS: dict[int, dict[str, tuple[str, str]]] = {
             "The same comparison using step 4's best gradient-boosted trees instead of the linear model.",
         ),
     },
+}
+
+
+STEP_TERMS[6] = {
+    **{k: STEP_TERMS[5][k] for k in ("forecast", "gap", "normal_range", "real_shortfall", "since_war")},
+    "normal": (
+        "Normal",
+        "Two meanings, one for each kind of data. For **imports**, normal means step 5's forecast: what was expected "
+        "without the war. For **port and airport figures**, which have no forecast, normal means the same months of "
+        "2025.",
+    ),
+    "pct_of_normal": (
+        "% of normal",
+        "Actual as a percentage of normal: 100% is normal, 50% is half. (Step 5's gap of -54% is 46% of normal.)",
+    ),
+    "route": (
+        "Route",
+        "How goods physically reach Bahrain: by container ship, car carrier or general cargo ship (all at Khalifa Bin "
+        "Salman Port), by plane (Bahrain International Airport), or by truck over the King Fahd Causeway.",
+    ),
+    "teu": (
+        "TEU",
+        "One twenty-foot shipping container. A standard forty-foot container counts as 2 TEU.",
+    ),
+    "car_carrier": (
+        "Car carrier (RoRo)",
+        "A \"roll-on, roll-off\" ship that vehicles are driven on and off. The port counts the vehicles unloaded.",
+    ),
+    "general_cargo": (
+        "General cargo",
+        "Goods that travel neither in containers nor loose in bulk, loaded piece by piece: steel, timber, machinery, "
+        "bagged food, livestock. Counted in freight tonnes.",
+    ),
+    "freight_tonne": (
+        "Freight tonne",
+        "A shipping unit: one tonne, or one cubic metre if the goods are bulky, whichever is larger. So freight tonnes "
+        "are never less than the weight in tonnes.",
+    ),
+    "causeway": (
+        "King Fahd Causeway",
+        "The 25 km road bridge between Saudi Arabia and Bahrain, Bahrain's only road link to the mainland. No monthly "
+        "freight figures for it are published.",
+    ),
+    "beyond_me": (
+        "Beyond the Middle East",
+        "Goods from Asia, Europe, the Americas, Africa and Oceania (plus a small \"not specified\" group). Before the "
+        "war these came mostly by sea through the Strait of Hormuz, or by plane.",
+    ),
+    "weight_class": (
+        "Light, middle and heavy goods",
+        "Series grouped by their value per kilogram in 2024-2025. **Light**: BD 5 per kg or more (about $13), worth "
+        "flying: machinery and parts, medicines, instruments, watches, clothes. **Heavy**: under BD 1 per kg: steel, "
+        "plastics, meat, fruit, rice, building materials. **Middle**: in between. Vehicles are kept apart because "
+        "they travel on their own kind of ship.",
+    ),
+    "elimination": (
+        "Elimination",
+        "Working out how much came by a route with no figures (the road) by taking away the most the other routes "
+        "could have carried.",
+    ),
+    "came_back": (
+        "Came back ...% of the way",
+        "How much of the drop had been made up by the latest period. From 46% of normal at the worst to 82% is "
+        "(82 - 46) / (100 - 46) = two-thirds of the way. Over 100% means it ended above normal.",
+    ),
+    "adapting": (
+        "Adapting",
+        "Finding other ways to get goods in while the usual route is shut. Used instead of \"recovery\" because the "
+        "Strait of Hormuz closed again on 11 July and was still closed in October.",
+    ),
 }
 
 

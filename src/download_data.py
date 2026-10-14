@@ -113,7 +113,7 @@ def main() -> int:
                 continue
 
             rows = count_rows(dest)
-            note = "" if rows == ds.rows_seen else f"  (portal showed {ds.rows_seen:,} on 2026-10-11)"
+            note = "" if rows == ds.rows_seen else f"  (portal showed {ds.rows_seen:,} on {ds.checked})"
             print(f"    {rows:,} rows{note}")
             manifest[ds.name] = {
                 "dataset_id": ds.dataset_id,

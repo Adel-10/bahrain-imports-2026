@@ -17,7 +17,9 @@ What "cleaning" means here (all decisions are based on profiling the real files)
   * each product and country gets one consistent description;
   * bulk raw materials (iron ore, alumina, coke, construction minerals) are
     labelled, because they dominate import weight;
-  * odd rows are flagged, never dropped, so totals still match the official figures.
+  * odd rows are flagged, never dropped, so totals still match the official figures;
+  * in the port's general cargo figures, months typed with a decimal point instead of
+    a thousands separator are repaired and flagged (see fix_general_cargo).
 """
 
 from __future__ import annotations
@@ -57,7 +59,10 @@ ROUTE_SERIES = {
         "ExportCargo & Mail (In Tonnes)": "air_export_t",
         "Transshipment Cargo & Mail (In Tonnes)": "air_transship_t",
     },
+    "port_roro": {"roro_units_vehicles": "port_roro_vehicles"},
+    "port_general_cargo": {"general_cargo_volume_ft": "port_general_cargo_ft"},
 }
+GENERAL_CARGO_TYPO_BELOW = 1_000   # every correctly typed month since 2019 is above 3,000 freight tonnes
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +203,29 @@ def build_route_monthly() -> pd.DataFrame:
         parts.append(df.assign(series=df["series"].map(mapping)).pivot(index="date", columns="series", values="value"))
     out = pd.concat(parts, axis=1).sort_index()
     out.columns.name = None
-    return out.reset_index()
+    return fix_general_cargo(out.reset_index())
+
+
+def fix_general_cargo(route: pd.DataFrame) -> pd.DataFrame:
+    """Repair two problems in the port's general cargo figures, and note every month changed.
+
+    1. From February 2026, several months read like 56.186 or 170.881 freight tonnes, while every
+       other month since 2019 is between 3,000 and 194,000 (June 2026 itself reads 112609). They are
+       thousands typed with a decimal point (56.186 means 56,186), so they are multiplied by 1,000.
+    2. A month recorded as 0 while general cargo ships called at the port (March 2026: 17 ships) is
+       treated as missing rather than as nothing unloaded.
+    """
+    col = "port_general_cargo_ft"
+    route = route.copy()
+    note = pd.Series("", index=route.index, dtype=object)
+    typo = (route[col] > 0) & (route[col] < GENERAL_CARGO_TYPO_BELOW)
+    note[typo] = "decimal point fixed: " + route.loc[typo, col].map(lambda v: f"{v:g}") + " read as thousands"
+    route.loc[typo, col] = (route.loc[typo, col] * 1000).round()
+    missing = (route[col] == 0) & (route["port_general_cargo_vessels"] > 0)
+    note[missing] = "recorded as 0 although general cargo ships called; treated as missing"
+    route.loc[missing, col] = np.nan
+    route["port_general_cargo_note"] = note
+    return route
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +305,13 @@ def write_report(clean: pd.DataFrame, stats: dict, route: pd.DataFrame, calendar
 
     last_import = clean["date"].max()
     route_cov = {c: f"{route.loc[route[c].notna(), 'date'].min():%b %Y} to {route.loc[route[c].notna(), 'date'].max():%b %Y}"
-                 for c in ["port_import_teu", "port_total_vessels", "air_import_t"]}
+                 for c in ["port_import_teu", "port_total_vessels", "air_import_t", "port_roro_vehicles",
+                           "port_general_cargo_ft"]}
+    fixes = route[route["port_general_cargo_note"] != ""]
+    fix_rows = pd.DataFrame({"month": fixes["date"].dt.strftime("%b %Y"),
+                             "freight tonnes used": fixes["port_general_cargo_ft"].map(
+                                 lambda v: "missing" if pd.isna(v) else f"{v:,.0f}"),
+                             "what was done": fixes["port_general_cargo_note"]})
 
     lines = [
         "# Step 2: cleaning report",
@@ -322,10 +355,20 @@ def write_report(clean: pd.DataFrame, stats: dict, route: pd.DataFrame, calendar
         "",
         "## Other tables built",
         f"- `route_monthly.parquet`: port containers {route_cov['port_import_teu']}, ship visits "
-        f"{route_cov['port_total_vessels']}, air cargo {route_cov['air_import_t']}.",
+        f"{route_cov['port_total_vessels']}, air cargo {route_cov['air_import_t']}, vehicles unloaded from car "
+        f"carriers (RoRo) {route_cov['port_roro_vehicles']}, general cargo {route_cov['port_general_cargo_ft']}.",
         f"- `calendar.csv`: {len(calendar)} months ({calendar['date'].min():%b %Y} to {calendar['date'].max():%b %Y}) "
         "with Ramadan days, Eid flags and COVID flags.",
         "- `hs_sections.csv`: chapter to section lookup.",
+        "",
+        "## Port general cargo: months repaired",
+        "In the general cargo file (freight tonnes per month at Khalifa Bin Salman Port), some 2026 months were "
+        "typed with a decimal point where a thousands separator belongs: 56.186 instead of 56,186. Every other "
+        f"month since 2019 is above 3,000, so values between 0 and {GENERAL_CARGO_TYPO_BELOW:,} are multiplied by "
+        "1,000. A month recorded as 0 while general cargo ships called at the port is treated as missing. "
+        "The column `port_general_cargo_note` in `route_monthly.parquet` marks each month changed.",
+        "",
+        md_table(fix_rows) if len(fix_rows) else "No months needed repairing.",
         "",
     ]
     return "\n".join(lines)

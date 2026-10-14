@@ -55,6 +55,13 @@ CSV_AIR = (
     "2.0,2026,09 September,09 سبتمبر,Import Cargo & Mail (In Tonnes),استيراد البضائع والبريد (بالأطنان),\r\n"
 )
 
+# Single-series file: no series column, so the number column's name becomes the series name.
+CSV_GENERAL_CARGO = (
+    "n,year,month,lshhr,general_cargo_volume_ft\r\n"
+    "86.0,2026,01 January,01 يناير,40487.0\r\n"
+    "87.0,2026,02 February,02 فبراير,56.186\r\n"
+)
+
 
 def write(tmp_path, name: str, text: str, bom: bool = False):
     path = tmp_path / name
@@ -116,3 +123,9 @@ def test_route_files(tmp_path):
     assert air.loc[0, "series"] == "Import Cargo & Mail (In Tonnes)"
     assert air.loc[0, "value"] == 10323.0
     assert len(air) == 1                            # blank placeholder month dropped
+
+
+def test_single_series_route_file(tmp_path):
+    cargo = load_route(write(tmp_path, "g.csv", CSV_GENERAL_CARGO), "port_general_cargo")
+    assert cargo["series"].unique().tolist() == ["general_cargo_volume_ft"]
+    assert cargo["value"].tolist() == [40487.0, 56.186]          # read as published; step 2 repairs it

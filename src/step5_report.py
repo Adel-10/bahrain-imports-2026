@@ -128,13 +128,14 @@ def mdates_num(ts: pd.Timestamp) -> float:
 
 
 def grid_chart(rows: list[tuple[str, dict]], columns: list[str], title: str, subtitle: str, name: str,
-               first_col_width: float = 3.3) -> None:
+               first_col_width: float = 3.3, bold_columns: set[str] | None = None, cell_width: float = 0.78) -> None:
     """A table-like chart: one row per total, one column per month (and period), coloured only when outside the range.
 
-    rows: (label, {column: (gap_pct, outside)}).
+    rows: (label, {column: (gap_pct, outside)}). Column headers in `bold_columns` are bold (by default, any
+    starting "Mar": the "since the war" column).
     """
     n_rows, n_cols = len(rows), len(columns)
-    cell_w, cell_h = 0.78, 0.36
+    cell_w, cell_h = cell_width, 0.36
     width = first_col_width + n_cols * cell_w + 0.5
     height = 1.95 + n_rows * cell_h + 0.85
     fig = new_figure(width, height, title, subtitle)
@@ -169,7 +170,9 @@ def grid_chart(rows: list[tuple[str, dict]], columns: list[str], title: str, sub
                         fontsize=8.5, color=text)
     for j, col in enumerate(columns):
         fig.text((first_col_width + (j + 0.5) * cell_w) / w, (0.75 + n_rows * cell_h + 0.12) / h, col, ha="center",
-                 va="bottom", fontsize=9, color=INK2, fontweight="semibold" if col.startswith("Mar") else "normal")
+                 va="bottom", fontsize=9, color=INK2,
+                 fontweight="semibold" if (col in bold_columns if bold_columns is not None else col.startswith("Mar"))
+                 else "normal")
     source_note(fig)
     save(fig, name)
 

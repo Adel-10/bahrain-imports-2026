@@ -89,6 +89,12 @@ def check_routes() -> tuple[list[str], list[str]]:
         loaded[ds.name] = df
         first, last = df["date"].min(), df["date"].max()
         print(f"{ds.name:<18}{len(df):>5} rows   {first:%b %Y} to {last:%b %Y}   series: {df['series'].nunique()}")
+        if ds.name == "port_general_cargo":
+            typos = df[(df["value"] > 0) & (df["value"] < 1_000)]
+            if len(typos):
+                months = ", ".join(f"{d:%b %Y}" for d in typos["date"])
+                notes.append(f"port_general_cargo: {len(typos)} month(s) look like thousands typed with a decimal point "
+                             f"(for example {typos['value'].iloc[0]:g}): {months}")
 
     for name, series, year, months, expected in REFERENCE_ROUTE_POINTS:
         if name not in loaded:

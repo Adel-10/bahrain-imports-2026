@@ -51,10 +51,14 @@ NUMERIC_COLUMNS = ["value_bd", "value_usd", "weight_kg", "quantity"]
 TEXT_COLUMNS = ["hs8", "commodity_en", "iso2", "country_en", "unit"]
 
 # For each route file: (column holding the series name, column holding the number).
+# The RoRo and general cargo files hold a single series, so they have no series column;
+# the number column's name is used as the series name instead.
 ROUTE_COLUMNS = {
     "port_containers": ("container_type", "teus"),
     "port_vessels": ("vessel_type", "vessels"),
     "airport_cargo": ("data_type", "value"),
+    "port_roro": (None, "roro_units_vehicles"),
+    "port_general_cargo": (None, "general_cargo_volume_ft"),
 }
 
 
@@ -112,7 +116,7 @@ def load_route(path: str | Path, name: str) -> pd.DataFrame:
     df = pd.DataFrame({
         "year": pd.to_numeric(raw["year"].str[:4]).astype("int16"),
         "month": _month_numbers(raw["month"]),
-        "series": raw[series_col].str.strip(),
+        "series": raw[series_col].str.strip() if series_col else value_col,
         "value": pd.to_numeric(raw[value_col], errors="coerce"),
     })
     # Some files include blank placeholder rows for months not yet published

@@ -8,7 +8,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from build_dataset import add_flags, add_hierarchy, latest_wording, merge_repeats
+from build_dataset import add_flags, add_hierarchy, fix_general_cargo, latest_wording, merge_repeats
 from reference import HS_SECTIONS, build_calendar, chapter_to_section
 
 
@@ -96,3 +96,16 @@ def test_calendar_matches_known_dates():
     # Every year has about 29-30 Ramadan days in total.
     per_year = cal.groupby(cal.index.year)["ramadan_days"].sum()
     assert per_year.between(29, 30).all()
+
+
+def test_general_cargo_repair():
+    route = pd.DataFrame({
+        "date": pd.date_range("2026-01-01", periods=5, freq="MS"),
+        "port_general_cargo_ft": [40487.0, 56.186, 0.0, 134.42, 0.0],
+        "port_general_cargo_vessels": [32, 32, 17, 22, 0],
+    })
+    out = fix_general_cargo(route)
+    assert out["port_general_cargo_ft"].iloc[[0, 1, 3, 4]].tolist() == [40487.0, 56186.0, 134420.0, 0.0]
+    assert pd.isna(out["port_general_cargo_ft"].iloc[2])          # 0 while 17 ships called: missing
+    assert out["port_general_cargo_note"].iloc[0] == "" and out["port_general_cargo_note"].iloc[4] == ""
+    assert "56.186" in out["port_general_cargo_note"].iloc[1]
