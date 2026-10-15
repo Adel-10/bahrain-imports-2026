@@ -494,8 +494,7 @@ where a thousands separator belongs (56.186 instead of 56,186). Step 2 now repai
 open circles in the chart. March 2026 was recorded as 0 although 17 general cargo ships called, so it is treated as
 missing.
 
-**Why it matters:** goods kept arriving at {pon(el_all['weight_pct_of_2025'])} of their 2025 weight from
-{since_short}, while containers ran at a third. The difference had to come in some other way. Sections 2 and 3 work out how.
+**Why it matters:** goods kept arriving at {pon(el_all['weight_pct_of_2025'])} of their 2025 weight from {since_short}, while containers ran at a third. The difference had to come in some other way. Sections 2 and 3 work out how.
 
 ---
 
@@ -513,8 +512,7 @@ ranges from step 4's tests) for groups of goods that depend on different routes.
 1. **Goods from GCC countries held up**: {pct(g(ORIGIN_LEVEL, GCC, since_label))} from {since_short}, inside the normal range.
    {"In " + latest + " they were " + pct(gcc_latest) + ", **above** normal (outside the range)." if gcc_outside and gcc_latest > 0 else ""}
 2. **Goods from the rest of the Middle East fell, but less**: {pct(g(ORIGIN_LEVEL, OTHER_ME, since_label))}.
-3. **Goods from beyond the Middle East fell furthest**: {pct(g(ORIGIN_LEVEL, BEYOND, since_label))}, and
-   {pct(g(ORIGIN_LEVEL, BEYOND, 'March'))} in March. {beyond_lost_sentence}
+3. **Goods from beyond the Middle East fell furthest**: {pct(g(ORIGIN_LEVEL, BEYOND, since_label))}, and {pct(g(ORIGIN_LEVEL, BEYOND, 'March'))} in March. {beyond_lost_sentence}
 
 ### 2b. Goods from beyond the Middle East: light against heavy
 

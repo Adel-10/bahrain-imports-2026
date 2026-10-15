@@ -18,7 +18,7 @@ Causeway from Saudi Arabia. The port and the airport publish monthly figures; th
 4. **Adapting.** How far each supply chain had come back by the latest period, and what the port
    and airport figures (published two months ahead of the import data) say about August and later.
 
-Writes reports/step6_routes.md, four charts, and data/interim/step6_*.csv.
+Writes reports/step6_routes.md, four charts, and data/interim/step6_*.csv (read by summary.py).
 """
 
 from __future__ import annotations
@@ -331,6 +331,7 @@ def main() -> int:
     gaps.drop(columns="month_list").to_csv(INTERIM_DIR / "step6_route_gaps.csv", index=False)
     elim.to_csv(INTERIM_DIR / "step6_elimination.csv", index=False)
     adapt.to_csv(INTERIM_DIR / "step6_adapting.csv", index=False)
+    engines.to_csv(INTERIM_DIR / "step6_engines.csv", index=False)
 
     results = {"route": route, "core": core, "indicators": indicators, "route_periods": r_periods,
                "periods": periods, "since": since, "war_periods": war_periods, "gaps": gaps, "ranges": ranges,

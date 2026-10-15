@@ -224,6 +224,18 @@ STEP_TERMS[6] = {
 }
 
 
+# The project summary (written in step 7) uses words from every step.
+STEP_TERMS[7] = {
+    **STEP_TERMS[6],
+    "lost": STEP_TERMS[5]["lost"],
+    "miss": (
+        "Miss",
+        "How far a forecast was from what actually arrived, ignoring whether it was too high or too low, as % of "
+        "actual imports. Lower is better.",
+    ),
+}
+
+
 def label(name: str) -> str:
     """'National total (also ...)' -> '**National total** (also ...)'."""
     if " (" in name:

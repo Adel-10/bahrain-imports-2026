@@ -88,5 +88,25 @@
     "rows": 144,
     "bytes": 20449,
     "sha256": "9fd0bed26ccf44f6008df89f92b44697c38b9be18656f07a5ebe96be31706670"
+  },
+  "port_roro": {
+    "dataset_id": "03-roro-units-statistics-at-khalifa-bin-salman-port",
+    "title": "Roro Units Statistics at Khalifa Bin Salman Port",
+    "portal_modified": "2026-10-12T09:43:34.628000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/03-roro-units-statistics-at-khalifa-bin-salman-port/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-14T01:03:43+00:00",
+    "rows": 93,
+    "bytes": 3973,
+    "sha256": "1b8c61b65503657c47f10da1fe6360d63a6b6c6aadcec31944b3c57a273210f0"
+  },
+  "port_general_cargo": {
+    "dataset_id": "04-general-cargo-volume-statistics-at-khalifa-bin-salman-port",
+    "title": "General Cargo Volume Statistics at Khalifa Bin Salman Port",
+    "portal_modified": "2026-10-12T09:45:40.134000+00:00",
+    "url": "https://www.data.gov.bh/api/explore/v2.1/catalog/datasets/04-general-cargo-volume-statistics-at-khalifa-bin-salman-port/exports/csv?delimiter=,",
+    "downloaded_at_utc": "2026-10-14T01:03:45+00:00",
+    "rows": 93,
+    "bytes": 3918,
+    "sha256": "490fec2e1c7753da1566e6459298cedab8cbf523a3910fba154f752e751f640b"
   }
 }

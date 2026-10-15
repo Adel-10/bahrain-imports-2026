@@ -12,7 +12,7 @@ Totals are identical before and after cleaning (checked month by month in the sc
 | 2023 | 321,376 | 321,376 | 5,778 | 26,994 |
 | 2024 | 322,062 | 322,062 | 5,872 | 25,948 |
 | 2025 | 324,818 | 324,816 | 6,185 | 27,553 |
-| 2026 | 155,241 | 155,238 | 2,682 | 8,608  |
+| 2026 | 155,241 | 155,238 | 2,682 | 8,608 |
 
 ## Repeated shipments
 6 product-country-months had more than one row (12 rows in total). They are separate shipments with different values, so they were added together.
@@ -82,6 +82,19 @@ A series is a product (at the given level), optionally split by origin country.
 | hs8 x iso2 | 138,460 | 7,966 | 66.4 |
 
 ## Other tables built
-- `route_monthly.parquet`: port containers Jan 2019 to Sep 2026, ship visits Jan 2019 to Sep 2026, air cargo Jan 2023 to Aug 2026.
+- `route_monthly.parquet`: port containers Jan 2019 to Sep 2026, ship visits Jan 2019 to Sep 2026, air cargo Jan 2023 to Aug 2026, vehicles unloaded from car carriers (RoRo) Jan 2019 to Sep 2026, general cargo Jan 2019 to Sep 2026.
 - `calendar.csv`: 108 months (Jan 2019 to Dec 2027) with Ramadan days, Eid flags and COVID flags.
 - `hs_sections.csv`: chapter to section lookup.
+
+## Port general cargo: months repaired
+In the general cargo file (freight tonnes per month at Khalifa Bin Salman Port), some 2026 months were typed with a decimal point where a thousands separator belongs: 56.186 instead of 56,186. Every other month since 2019 is above 3,000, so values between 0 and 1,000 are multiplied by 1,000. A month recorded as 0 while general cargo ships called at the port is treated as missing. The column `port_general_cargo_note` in `route_monthly.parquet` marks each month changed.
+
+| month | freight tonnes used | what was done |
+|---|---|---|
+| Feb 2026 | 56,186 | decimal point fixed: 56.186 read as thousands |
+| Mar 2026 | missing | recorded as 0 although general cargo ships called; treated as missing |
+| Apr 2026 | 59,386 | decimal point fixed: 59.386 read as thousands |
+| May 2026 | 105,553 | decimal point fixed: 105.553 read as thousands |
+| Jul 2026 | 170,881 | decimal point fixed: 170.881 read as thousands |
+| Aug 2026 | 134,420 | decimal point fixed: 134.42 read as thousands |
+| Sep 2026 | 165,861 | decimal point fixed: 165.861 read as thousands |
