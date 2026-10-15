@@ -20,6 +20,7 @@ questions:
 | Which routes broke? | **Container ships** (about a third of the usual containers from March to July), **car carriers** (none at all from April) and, in March, **planes**. |
 | How did goods still get in? | **By other routes.** Containers and planes could have carried at most 46% of what arrived (by weight), so **at least 54% came over the King Fahd Causeway or by general cargo ship**. Light goods from far away held up while planes could fly: -13% in April-May (leaving out aircraft engines), against -54% for heavy goods. |
 | How far had they come back? | **About two-thirds of the way** by Jun-Jul (from 46% of normal to 82%). Vehicles, clothing, East Asia and the Americas lagged. Port figures suggest supply chains kept adapting after Hormuz closed again on 11 July. |
+| Did relying on few supplier countries matter? | **No clear effect.** Products bought from one or two countries fell about as far as products with many suppliers. **What mattered was distance**: each extra 10% of a product from beyond the Middle East meant about 5 points further below normal. |
 | How do we know it's not normal ups and downs? | The forecast was **tested on 2024 and 2025 as if it were January**: nationally it missed by 5.5% a month in 2025. Its normal ranges held 88-92% of the time in testing, and every war-time gap is far outside them. |
 
 ## Words used in this summary
@@ -212,6 +213,25 @@ countries, which can come by road, held up.
 * **After July:** with Hormuz closed again, containers unloaded rose from 30% of normal in Jun-Jul
   to 47% in Aug-Sep, a sign that supply chains kept finding other ways in.
 
+
+---
+
+## 7. Extra: did relying on few supplier countries matter?
+
+![Suppliers](figures/extra_suppliers_1_groups.png)
+
+* **The number of supplier countries made no measurable difference.** Grouped by how many countries they relied on,
+  products fell to between 61% and 76% of normal, in no particular order.
+  Allowing for distance, each doubling of supplier countries changed the result by +1.7 points
+  (likely -3.7 to +7.3).
+* **Distance did.** Products bought mostly nearby were at 103% of normal;
+  products almost entirely from beyond the Middle East at 59%. Each extra
+  10% from beyond the Middle East meant about 5 points further below normal.
+* **Some switching:** 27% of far-dependent products' imports came from countries that had
+  been minor suppliers, against 19-23% in normal years, mostly other distant
+  countries.
+* **The lesson:** diversify routes, not just countries.
+
 ---
 
 ## What this project can't tell us
@@ -226,8 +246,7 @@ countries, which can come by road, held up.
 
 1. **A "what if" range for the road's own share**, using reasonable assumptions about how much a container holds and how
    much general cargo was imports.
-2. **Did products that relied on only a few supplier countries get hit harder?**
-3. **Update with August onwards** when the portal publishes it, the first months with Hormuz closed and no reopening.
+2. **Update with August onwards** when the portal publishes it, the first months with Hormuz closed and no reopening.
 
 ## The detailed reports
 
@@ -238,5 +257,6 @@ countries, which can come by road, held up.
 | 4. Model | [Forecasting models](step4_models.md) | `src/backtest.py` |
 | 5. Shortfall | [The 2026 shortfall](step5_shortfall.md) | `src/shortfall.py` |
 | 6. Routes | [Routes and adapting](step6_routes.md) | `src/routes.py` |
+| Extra | [Supplier concentration](extra_suppliers.md) | `src/suppliers.py` |
 
 *Source: Bahrain Open Data Portal (iGA), www.data.gov.bh. All analysis is my own and is not attributed to the iGA.*

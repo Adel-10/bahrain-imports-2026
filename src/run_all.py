@@ -26,6 +26,7 @@ STEPS = [
     ("backtest", "Step 4: train and test the models"),
     ("shortfall", "Step 5: the 2026 shortfall"),
     ("routes", "Step 6: routes and adapting"),
+    ("suppliers", "Extra: did relying on few supplier countries matter?"),
     ("summary", "Step 7: the summary"),
 ]
 NAMES = [name for name, _ in STEPS]

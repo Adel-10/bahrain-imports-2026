@@ -236,6 +236,60 @@ STEP_TERMS[7] = {
 }
 
 
+# The supplier-concentration extra (numbered 8 here, after the summary).
+STEP_TERMS[8] = {
+    **{k: STEP_TERMS[6][k] for k in ("pct_of_normal", "real_shortfall", "since_war", "beyond_me")},
+    "product": (
+        "Product",
+        "One 4-digit HS heading, such as 8703 (cars) or 1006 (rice), from all origins together. Only products with "
+        "imports in almost every month are used; together they are almost all of core goods by value.",
+    ),
+    "forecast": (
+        "Forecast",
+        "What step 4's linear model, rebuilt for each product, expected **without the war**. It was made at the end "
+        "of December 2025, so it never saw any 2026 data.",
+    ),
+    "normal_range": (
+        "Normal range",
+        "How far from the forecast a group's total can be in a normal year (9 times out of 10), measured by running "
+        "the same product model on 2024 and 2025.",
+    ),
+    "effective_suppliers": (
+        "Supplier countries (effective number)",
+        "How many countries a product really relied on in 2024-2025, allowing for their sizes: 1 / (sum of each "
+        "country's squared share). Two equal suppliers give 2; 90% from one and 10% from another gives about 1.2.",
+    ),
+    "beyond_share": (
+        "Share from beyond the Middle East",
+        "The part of a product's 2024-2025 imports that came from beyond the Middle East, which normally has to "
+        "pass the Strait of Hormuz or fly.",
+    ),
+    "median_product": (
+        "Typical product",
+        "The median: half the products in the group did better, half did worse. Unlike the group total, it isn't "
+        "dominated by a few big products such as cars.",
+    ),
+    "regression": (
+        "Regression",
+        "A comparison that looks at several things at once, here the number of supplier countries and the share "
+        "from beyond the Middle East, so the effect of each can be seen with the others held fixed.",
+    ),
+    "likely_range": (
+        "Likely range",
+        "The regression re-run on 2,000 random re-draws of the products (bootstrapping); the middle 90% of the "
+        "answers. If the range includes zero, the effect can't be told apart from no effect.",
+    ),
+    "minor_supplier": (
+        "Minor supplier",
+        "A country that had supplied under 5% of a product in the two years before.",
+    ),
+    "far_dependent": (
+        "Far-dependent product",
+        "A product with at least 75% of its 2024-2025 imports from beyond the Middle East.",
+    ),
+}
+
+
 def label(name: str) -> str:
     """'National total (also ...)' -> '**National total** (also ...)'."""
     if " (" in name:
