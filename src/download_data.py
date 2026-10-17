@@ -5,9 +5,27 @@ Run from anywhere:
     python src/download_data.py --force          # download everything again
     python src/download_data.py --only imports_2026 airport_cargo
 
-Files are saved untouched to data/raw/<name>.csv. What was downloaded, and when,
-is recorded in data/raw/MANIFEST.json, because the portal's terms of use require
-citing the download date wherever the data is used.
+What it does
+------------
+For each dataset listed in ``config.DATASETS`` it asks the portal's export API for the whole
+dataset as one CSV and saves it, byte for byte, to ``data/raw/<name>.csv``. The raw files are
+never edited; every correction happens later in ``build_dataset.py``, where it is visible and
+tested.
+
+Each download is recorded in ``data/raw/MANIFEST.json``: the portal's title and last-modified
+date, the download time, the row count and a SHA-256 checksum. The portal's terms of use ask for
+the download date to be cited, and the checksum lets anyone confirm they are running the analysis
+on exactly the same files.
+
+Design choices
+--------------
+* Files are streamed to a temporary ``.part`` file and renamed only when complete, so an
+  interrupted download can never be mistaken for a finished one.
+* Failed requests are retried three times with a growing pause, and the script waits a second
+  between datasets so it doesn't hammer a public service.
+* Files that are already downloaded are skipped unless ``--force`` is given. The portal adds new
+  months to the 2026 file as they are published, so ``--force --only imports_2026`` is how the
+  analysis is brought up to date.
 """
 
 from __future__ import annotations
@@ -73,6 +91,7 @@ def count_rows(path: Path) -> int:
 
 
 def sha256(path: Path) -> str:
+    """Checksum of a file, read in 1 MB blocks so large files don't need to fit in memory."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for block in iter(lambda: f.read(CHUNK), b""):
@@ -81,6 +100,7 @@ def sha256(path: Path) -> str:
 
 
 def load_manifest() -> dict:
+    """The record of earlier downloads (empty on the first run)."""
     if MANIFEST_PATH.exists():
         return json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     return {}
@@ -112,6 +132,8 @@ def main() -> int:
                 failed.append(ds.name)
                 continue
 
+            # A different row count from the one seen on the portal is not an error (the 2026 file
+            # grows as months are published), so it is reported rather than treated as a failure.
             rows = count_rows(dest)
             note = "" if rows == ds.rows_seen else f"  (portal showed {ds.rows_seen:,} on {ds.checked})"
             print(f"    {rows:,} rows{note}")
@@ -124,6 +146,7 @@ def main() -> int:
                 "bytes": size,
                 "sha256": sha256(dest),
             }
+            # The manifest is saved after every file, so a crash part-way through keeps the record so far.
             MANIFEST_PATH.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
             time.sleep(1)  # be gentle with the portal
 

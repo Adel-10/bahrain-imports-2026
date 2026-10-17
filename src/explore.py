@@ -4,38 +4,56 @@
 
 Reads the step 2 tables and writes:
   * reports/figures/step3_*.png    six charts
-  * reports/step3_exploration.md   what they show, and the decisions for step 4
+  * reports/step3_exploration.md   what they show, and the decisions taken for step 4
 
-Every number in the report is computed here, so re-running after the portal adds
-a month refreshes the numbers. The chart titles and the written interpretation
-were checked against data up to July 2026.
+Purpose
+-------
+Before choosing a model, it pays to understand the data: which imports behave alike, how much
+they move in a normal year, and how finely they can be split before the noise drowns the signal.
+This script answers those questions and takes a first look at 2026.
 
-Throughout, "normal" means 2025: a month's change is measured against the 2025
-monthly average of the same series. Imports have little seasonality (shown
-below), so the average is a steadier yardstick than a single month a year earlier.
+The yardstick used here
+-----------------------
+A 2026 month is compared with the **average month of 2025** for the same thing (a region, a
+section, a product group). Two measures say whether a change is large:
+
+* the **normal miss**: forecast every month of a year as the previous year's average month and
+  measure the total absolute miss as a share of the total forecast (``gap``);
+* the **normal range**: the distance from the previous year's average month that 9 months out of
+  10 stayed within in 2023-2025 (``normal_swing``).
+
+Pros: simple, transparent and easy to check by hand. Imports turn out to have little
+seasonality, so the average month is a steadier yardstick than the same month a year earlier
+(section 2 of the report shows this). Cons: it ignores growth and the calendar. Step 4 replaces
+it with proper forecasts for each month, and step 5 measures the 2026 shortfall against those.
+
+Code layout
+-----------
+1. Data helpers: tables of series x month, and the yardstick calculations.
+2. Figures: one function per chart (shared styling comes from charts.py).
+3. Analyses: each returns a table used by the charts and the report.
+4. Report: the markdown template, filled in with the numbers computed above.
+
+Every number in the report is computed here, so re-running after the portal adds a month
+refreshes it. The written interpretation was checked against data up to July 2026.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.dates as mdates
-import matplotlib.pyplot as plt
-from matplotlib.patches import PathPatch, Rectangle
-from matplotlib.path import Path
+from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 
-import glossary
-from build_dataset import md_table
+from charts import (AQUA, BASELINE, BLUE, FIG_DIR, GRID, INK, INK2, MUTED, ORANGE, SHADE, SURFACE, WAR_START, YELLOW,
+                    add_axes, dot_handle, end_dot, end_labels, legend, line_handle, month_axis, new_figure, rounded_bar,
+                    save, source_note, tidy)
 from config import REFERENCE_DIR, ROOT
 from reference import (BULK, CORE, OTHER_REGION, PRE_WAR_2026, PRECIOUS, WAR_PERIODS_2026, add_analysis_group,
                        add_region, period_event, war_periods_2026)
+from reporting import footer, md_table, signed, write_markdown
 
 PROCESSED_DIR = ROOT / "data" / "processed"
-FIG_DIR = ROOT / "reports" / "figures"
 REPORT_PATH = ROOT / "reports" / "step3_exploration.md"
 
 # 2026 periods, by month (from data/reference/events.csv via reference.py). The war began on 28 February.
@@ -43,12 +61,11 @@ REPORT_PATH = ROOT / "reports" / "step3_exploration.md"
 PRE_WAR = PRE_WAR_2026["Jan-Feb"]
 PERIODS = dict(WAR_PERIODS_2026)  # label -> months of 2026
 POST_WAR = [m for months in PERIODS.values() for m in months]
-WAR_START = pd.Timestamp("2026-02-28")
-COVID_END = pd.Timestamp("2022-03-28")
+COVID_END = pd.Timestamp("2022-03-28")        # COVID restrictions lifted (shaded on the first chart)
 
 MIN_SECTION_SHARE = 0.5                       # % of 2025 core value; smaller sections are left out of the chart
 SKIP_SECTIONS = {"National special codes"}    # confidential and special codes, not a supply chain
-AIRCRAFT_HS4 = {"8409", "8411", "8802", "8803"}
+AIRCRAFT_HS4 = {"8409", "8411", "8802", "8803"}   # engines, engine parts, aircraft and aircraft parts
 
 # Short names for 4-digit codes that come up in the report (the data only names 8-digit codes).
 HS4_NAMES = {
@@ -62,15 +79,14 @@ HS4_NAMES = {
     "9898": "Confidential goods (national code)",
 }
 
-# Chart style (dataviz reference palette; colours checked with validate_palette.js).
-SURFACE, INK, INK2, MUTED = "#fcfcfb", "#0b0b0b", "#52514e", "#898781"
-GRID, BASELINE, SHADE = "#e1e0d9", "#c3c2b7", "#f0efec"
-BLUE, ORANGE, AQUA, YELLOW = "#2a78d6", "#eb6834", "#1baf7a", "#eda100"
-PERIOD_COLOURS = dict(zip(PERIODS, [BLUE, ORANGE, AQUA, YELLOW]))
+PERIOD_COLOURS = dict(zip(PERIODS, [BLUE, ORANGE, AQUA, YELLOW]))   # one colour per 2026 period on the dot plots
 
 
 def extend_periods(last_month: pd.Timestamp) -> None:
-    """Bring PERIODS (and the lists built from it) up to the latest month the portal has published."""
+    """Bring PERIODS (and the lists built from it) up to the latest month the portal has published.
+
+    The lists are changed in place, so every function that already refers to them sees the update.
+    """
     if last_month.year != 2026:
         return
     PERIODS.clear()
@@ -79,25 +95,12 @@ def extend_periods(last_month: pd.Timestamp) -> None:
     PERIOD_COLOURS.clear()
     PERIOD_COLOURS.update(zip(PERIODS, [BLUE, ORANGE, AQUA, YELLOW]))
 
-plt.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Inter", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
-    "font.size": 9.5,
-    "figure.facecolor": SURFACE, "axes.facecolor": SURFACE, "savefig.facecolor": SURFACE,
-    "figure.dpi": 100, "savefig.dpi": 200,
-    "axes.edgecolor": BASELINE, "axes.linewidth": 1, "axes.labelcolor": INK2,
-    "xtick.color": MUTED, "ytick.color": MUTED, "xtick.labelcolor": INK2, "ytick.labelcolor": INK2,
-    "xtick.major.size": 0, "ytick.major.size": 0, "xtick.major.pad": 6, "ytick.major.pad": 6,
-    "axes.grid": False, "grid.color": GRID, "grid.linewidth": 1, "grid.linestyle": "-",
-    "lines.linewidth": 2, "lines.solid_capstyle": "round", "lines.solid_joinstyle": "round",
-    "legend.frameon": False, "legend.fontsize": 9.5,
-})
-
 
 # ---------------------------------------------------------------------------
 # Data helpers
 # ---------------------------------------------------------------------------
 def load_imports() -> pd.DataFrame:
+    """The cleaned imports with only the columns this step needs, plus origin region and analysis group."""
     cols = ["date", "year", "month", "section_id", "section_name", "product_group", "hs2", "hs4",
             "iso2", "country_en", "value_bd", "weight_kg"]
     df = pd.read_parquet(PROCESSED_DIR / "imports_clean.parquet", columns=cols)
@@ -107,13 +110,19 @@ def load_imports() -> pd.DataFrame:
 
 
 def wide(df: pd.DataFrame, keys: list[str], col: str = "value_bd") -> pd.DataFrame:
-    """Series x month table: one row per series, one column per month, missing months = 0."""
+    """Series x month table: one row per series, one column per month, missing months = 0.
+
+    `keys` defines a series (for example ["region"] gives one row per origin region). A month with
+    no trade really means nothing was imported, so it is filled with 0 rather than left missing.
+    With no keys the result is a single "total" row.
+    """
     if not keys:
         return df.groupby("date")[col].sum().to_frame("total").T
     return df.groupby([*keys, "date"], observed=True)[col].sum().unstack("date", fill_value=0.0)
 
 
 def months_of(w: pd.DataFrame, year: int, months: list[int] | None = None) -> pd.DataFrame:
+    """The columns of a wide table for one year (optionally only some months of it)."""
     mask = w.columns.year == year
     if months is not None:
         mask &= w.columns.month.isin(months)
@@ -121,13 +130,23 @@ def months_of(w: pd.DataFrame, year: int, months: list[int] | None = None) -> pd
 
 
 def change_vs_2025(w: pd.DataFrame, months: list[int]) -> pd.Series:
-    """% change of the average 2026 month in `months` vs the 2025 monthly average, per row."""
+    """% change of the average 2026 month in `months` vs the 2025 monthly average, per row.
+
+    This is the yardstick used throughout step 3: -53 means the period's average month was 53%
+    below an average month of 2025.
+    """
     base = months_of(w, 2025).mean(axis=1)
     return (months_of(w, 2026, months).mean(axis=1) / base - 1) * 100
 
 
 def normal_swing(w: pd.DataFrame, years=(2023, 2024, 2025), q: float = 0.9) -> pd.Series:
-    """Per row: 9 months out of 10 in `years` were within +/- this % of the previous year's average."""
+    """Per row: 9 months out of 10 in `years` were within +/- this % of the previous year's average.
+
+    For each normal year, every month is compared with the previous year's average month. The
+    absolute deviations of all those months are pooled and the 90th percentile is taken. A 2026
+    change inside this range could be ordinary noise; one outside it is unusual. Three years give
+    36 months per series, enough for a rough 90% range but not a precise one.
+    """
     swings = [months_of(w, y).div(months_of(w, y - 1).mean(axis=1), axis=0) - 1 for y in years]
     return pd.concat(swings, axis=1).abs().quantile(q, axis=1) * 100
 
@@ -138,6 +157,8 @@ def gap(w: pd.DataFrame, year: int, months: list[int] | None = None, forecast: s
     forecast="average": every month of `year` is forecast as the previous year's monthly average.
     forecast="same month": every month is forecast as the same month a year earlier.
     """
+    # Summing the absolute misses over every series and month, then dividing by the total forecast,
+    # weights each series by its size: a 10% miss on machinery counts for more than one on paper.
     actual = months_of(w, year, months)
     if forecast == "average":
         fc = np.repeat(months_of(w, year - 1).mean(axis=1).to_numpy()[:, None], actual.shape[1], axis=1)
@@ -147,128 +168,14 @@ def gap(w: pd.DataFrame, year: int, months: list[int] | None = None, forecast: s
 
 
 # ---------------------------------------------------------------------------
-# Chart helpers
-# ---------------------------------------------------------------------------
-def new_figure(width: float, height: float, title: str, subtitle: str):
-    fig = plt.figure(figsize=(width, height))
-    fig.text(0.6 / width, 1 - 0.32 / height, title, fontsize=14, fontweight="semibold", color=INK, va="top")
-    fig.text(0.6 / width, 1 - 0.62 / height, subtitle, fontsize=10, color=INK2, va="top", linespacing=1.45)
-    return fig
-
-
-def add_axes(fig, left: float, right: float, top: float, bottom: float):
-    """Axes placed by its distance in inches from each edge of the figure."""
-    w, h = fig.get_size_inches()
-    return fig.add_axes([left / w, bottom / h, 1 - (left + right) / w, 1 - (top + bottom) / h])
-
-
-def legend(fig, handles, labels, top: float, ncol: int):
-    """Legend in a row, `top` inches below the top of the figure, aligned with the title."""
-    w, h = fig.get_size_inches()
-    fig.legend(handles, labels, loc="upper left", bbox_to_anchor=(0.52 / w, 1 - top / h), ncol=ncol,
-               handlelength=1.4, columnspacing=1.6, borderaxespad=0)
-
-
-def tidy(ax, grid_axis: str = "y"):
-    for side in ("top", "right", "left"):
-        ax.spines[side].set_visible(False)
-    if grid_axis == "x":
-        ax.spines["bottom"].set_visible(False)
-    ax.grid(True, axis=grid_axis, zorder=0)
-    ax.set_axisbelow(True)
-
-
-def source_note(fig, text: str = "Source: Bahrain Open Data Portal (iGA), www.data.gov.bh. Analysis: own."):
-    w, h = fig.get_size_inches()
-    fig.text(0.6 / w, 0.14 / h, text, fontsize=8, color=MUTED)
-
-
-def line_handle(colour, lw=2):
-    return plt.Line2D([], [], color=colour, lw=lw)
-
-
-def dot_handle(colour):
-    return plt.Line2D([], [], ls="", marker="o", ms=8, color=colour, mec=SURFACE, mew=2)
-
-
-def end_dot(ax, x, y, colour):
-    ax.plot([x], [y], "o", ms=8, color=colour, mec=SURFACE, mew=2, zorder=5)
-
-
-def end_labels(ax, items, x_text=None, gap_pt: float = 13):
-    """Label line ends without overlaps.
-
-    items: (x, y, text) per line. Labels sit to the right of their point, or in a shared
-    column at data-x `x_text`. Labels that would overlap are spread apart vertically and
-    joined to their point by a thin leader line.
-    """
-    fig = ax.figure
-    fig.canvas.draw()
-    to_px = ax.transData.transform
-    pts = []
-    for x, y, text in items:
-        xn = mdates.date2num(x) if isinstance(x, pd.Timestamp) else x
-        px, py = to_px((xn, y))
-        pts.append({"x": x, "y": y, "text": text, "px": px, "py": py})
-    gap_px = gap_pt * fig.dpi / 72
-    pts.sort(key=lambda p: -p["py"])
-    ys = [p["py"] for p in pts]
-    for k in range(1, len(ys)):
-        ys[k] = min(ys[k], ys[k - 1] - gap_px)
-    shift = np.mean([p["py"] for p in pts]) - np.mean(ys)        # keep the block centred on the points
-    col_px = to_px((mdates.date2num(x_text) if isinstance(x_text, pd.Timestamp) else x_text, 0))[0] if x_text is not None else None
-    for p, ty in zip(pts, ys):
-        ty += shift
-        tx = col_px if col_px is not None else p["px"] + 9 * fig.dpi / 72
-        dx, dy = (tx - p["px"]) * 72 / fig.dpi, (ty - p["py"]) * 72 / fig.dpi
-        leader = abs(dy) > 1.5 or col_px is not None
-        ax.annotate(p["text"], (p["x"], p["y"]), xytext=(dx, dy), textcoords="offset points", va="center",
-                    fontsize=9, color=INK, annotation_clip=False,
-                    arrowprops=dict(arrowstyle="-", color=BASELINE, lw=0.8, shrinkA=3, shrinkB=6) if leader else None)
-
-
-def rounded_bar(ax, start, length, centre, thickness, colour, horizontal=True, radius_px=4):
-    """Bar with a 4px rounded data end and a square end at the baseline (call after setting limits)."""
-    fig = ax.figure
-    box = ax.get_window_extent(fig.canvas.get_renderer())
-    x_per_px = abs(np.ptp(ax.get_xlim())) / box.width
-    y_per_px = abs(np.ptp(ax.get_ylim())) / box.height
-    M, L, C, Z = Path.MOVETO, Path.LINETO, Path.CURVE3, Path.CLOSEPOLY
-    codes = [M, L, C, C, L, C, C, L, Z]
-    sign = -1.0 if length < 0 else 1.0           # a negative bar grows the other way; its rounded end is still the data end
-    if horizontal:
-        ra, rc = sign * min(radius_px * x_per_px, abs(length) / 2), min(radius_px * y_per_px, thickness / 2)
-        x0, x1, y0, y1 = start, start + length, centre - thickness / 2, centre + thickness / 2
-        verts = [(x0, y0), (x1 - ra, y0), (x1, y0), (x1, y0 + rc), (x1, y1 - rc), (x1, y1), (x1 - ra, y1), (x0, y1), (x0, y0)]
-    else:
-        ra, rc = sign * min(radius_px * y_per_px, abs(length) / 2), min(radius_px * x_per_px, thickness / 2)
-        x0, x1, y0, y1 = centre - thickness / 2, centre + thickness / 2, start, start + length
-        verts = [(x1, y0), (x1, y1 - ra), (x1, y1), (x1 - rc, y1), (x0 + rc, y1), (x0, y1), (x0, y1 - ra), (x0, y0), (x1, y0)]
-    ax.add_patch(PathPatch(Path(verts, codes), facecolor=colour, lw=0, zorder=3))
-
-
-def month_axis(ax, months=(1, 7), first=None):
-    """Month ticks; January (and the first tick, if given) also shows the year."""
-    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=months))
-
-    def fmt(x, _):
-        d = mdates.num2date(x)
-        show_year = d.month == 1 or (first is not None and d.year == first.year and d.month == first.month)
-        return d.strftime("%b\n%Y") if show_year else d.strftime("%b")
-    ax.xaxis.set_major_formatter(FuncFormatter(fmt))
-
-
-def save(fig, name: str) -> None:
-    FIG_DIR.mkdir(parents=True, exist_ok=True)
-    fig.savefig(FIG_DIR / name)
-    plt.close(fig)
-
-
-# ---------------------------------------------------------------------------
 # Figures
 # ---------------------------------------------------------------------------
 def fig_monthly(df: pd.DataFrame) -> None:
-    """Figure 1: monthly value and weight by analysis group, 2021 to latest month."""
+    """Figure 1: monthly value and weight by analysis group, 2021 to latest month.
+
+    Two panels share the time axis: value on top (all three groups) and weight below (precious
+    metals weigh almost nothing, so they are left out). The COVID months and the war are shaded.
+    """
     value = df.groupby(["date", "group"], observed=True)["value_bd"].sum().unstack() / 1e6
     weight = df.groupby(["date", "group"], observed=True)["weight_kg"].sum().unstack() / 1e6
     colours = {CORE: BLUE, BULK: ORANGE, PRECIOUS: AQUA}
@@ -279,7 +186,7 @@ def fig_monthly(df: pd.DataFrame) -> None:
     legend(fig, [line_handle(colours[g]) for g in (CORE, BULK, PRECIOUS)], [CORE, BULK, PRECIOUS], top=0.98, ncol=3)
     panels = [(value, [CORE, BULK, PRECIOUS], "Value (BD million)", 1.6, 4.15),
               (weight, [BULK, CORE], "Weight (thousand tonnes)", 4.95, 0.8)]
-    for data, groups, label, top, bottom in panels:
+    for data, groups, label, top, bottom in panels:       # top/bottom: the panel's margins in inches
         ax = add_axes(fig, left=0.75, right=1.55, top=top, bottom=bottom)
         tidy(ax)
         x_lo, x_hi = data.index.min() - pd.Timedelta(days=15), data.index.max() + pd.Timedelta(days=15)
@@ -303,7 +210,12 @@ def fig_monthly(df: pd.DataFrame) -> None:
 
 
 def fig_routes(route_idx: pd.DataFrame) -> None:
-    """Figure 2: goods arriving vs port containers, ship visits and air cargo, as % of the 2025 average."""
+    """Figure 2: goods arriving vs port containers, ship visits and air cargo, as % of the 2025 average.
+
+    Putting every series on the same "% of its own 2025 average" scale lets very different units
+    (BD, tonnes, containers, ship visits) share one chart. If goods kept arriving while containers
+    and air cargo did not, they must have come another way.
+    """
     series = [
         ("core_weight", "Core goods arriving (weight)", "Core goods", BLUE),
         ("port_import_teu", "Containers unloaded at the port", "Containers", ORANGE),
@@ -339,7 +251,12 @@ def fig_routes(route_idx: pd.DataFrame) -> None:
 
 
 def dot_plot(table: pd.DataFrame, band: pd.Series, title: str, subtitle: str, name: str, xlim: tuple) -> None:
-    """Rows = series (top to bottom in table order), one dot per 2026 period, grey band = normal swing."""
+    """Rows = series (top to bottom in table order), one dot per 2026 period, grey band = normal swing.
+
+    Used for figures 3 (origin regions) and 4 (sections). The band makes it easy to see which
+    changes are bigger than that series' normal month-to-month movement. Dots beyond the axis
+    limits are drawn at the edge so they stay visible.
+    """
     n = len(table)
     fig = new_figure(10, 1.75 + 0.37 * n + 0.75, title, subtitle)
     legend(fig, [dot_handle(c) for c in PERIOD_COLOURS.values()] + [Rectangle((0, 0), 1, 1, color=GRID, lw=0)],
@@ -364,7 +281,12 @@ def dot_plot(table: pd.DataFrame, band: pd.Series, title: str, subtitle: str, na
 
 
 def fig_patterns(core: pd.DataFrame) -> None:
-    """Figure 5: month-of-year pattern by year (index) and yearly totals."""
+    """Figure 5: month-of-year pattern by year (index) and yearly totals.
+
+    Left: each month divided by its own year's average, so years of different size can be
+    compared on one scale; a strong seasonal pattern would show as lines moving together.
+    Right: yearly totals, to show the trend.
+    """
     monthly = core.groupby("date")["value_bd"].sum()
     hist = monthly[monthly.index.year <= 2025]
     idx = hist / hist.groupby(hist.index.year).transform("mean") * 100
@@ -406,7 +328,11 @@ def fig_patterns(core: pd.DataFrame) -> None:
 
 
 def fig_levels(levels: pd.DataFrame, chosen: str) -> None:
-    """Figure 6: normal forecast miss vs the 2026 gap, by level of detail."""
+    """Figure 6: normal forecast miss vs the 2026 gap, by level of detail.
+
+    The war is easy to see where the 2026 gap (dot) is far beyond the normal miss (bar), and
+    hard to see where the two are close. This is the main input to choosing the model level.
+    """
     n = len(levels)
     fig = new_figure(10, 1.75 + 0.42 * n + 0.8, "The more detail, the bigger the normal forecast miss",
                      "Bars: average monthly gap in 2024-2025 between actual imports and a simple forecast "
@@ -436,6 +362,7 @@ def fig_levels(levels: pd.DataFrame, chosen: str) -> None:
 # Analyses (each returns tables used by the figures and the report)
 # ---------------------------------------------------------------------------
 def group_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Size, normal miss and 2026 changes for core goods, bulk materials and precious metals."""
     w, ww = wide(df, ["group"]), wide(df, ["group"], "weight_kg")
     v25, w25 = months_of(w, 2025).sum(axis=1), months_of(ww, 2025).sum(axis=1)
     out = pd.DataFrame({
@@ -451,6 +378,7 @@ def group_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def route_index(df: pd.DataFrame, route: pd.DataFrame) -> pd.DataFrame:
+    """Core goods (value and weight) and the route series, each as % of its own 2025 monthly average."""
     core = df[df["group"] == CORE].groupby("date")[["value_bd", "weight_kg"]].sum()
     core.columns = ["core_value", "core_weight"]
     data = route[["port_import_teu", "port_total_vessels", "air_import_t"]].join(core, how="outer")
@@ -471,6 +399,7 @@ def bulk_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     wo = wide(bulk, ["product_group", "country"], "weight_kg")
     origins = pd.DataFrame({"kt per month, 2025": months_of(wo, 2025).mean(axis=1) / 1e6,
                             "kt per month, Mar-Jul 2026": months_of(wo, 2026, POST_WAR).mean(axis=1) / 1e6})
+    # Keep the origins that mattered: at least 10% of a material's weight in either period, and at least 1 kt a month.
     group_total = origins.groupby(level=0).transform("sum")
     keep = ((origins / group_total) >= 0.1).any(axis=1) & (origins.max(axis=1) >= 1)
     origins = origins[keep].reset_index()
@@ -480,6 +409,7 @@ def bulk_tables(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def change_table(core: pd.DataFrame, key: str) -> tuple[pd.DataFrame, pd.Series]:
+    """Share of 2025 value and change in each 2026 period, by `key` (region or section), with the normal range."""
     w = wide(core, [key])
     w.index = w.index.astype(str)
     share = months_of(w, 2025).sum(axis=1) / months_of(w, 2025).to_numpy().sum() * 100
@@ -489,15 +419,22 @@ def change_table(core: pd.DataFrame, key: str) -> tuple[pd.DataFrame, pd.Series]
     return table.loc[order], normal_swing(w).loc[order]
 
 
-LEVELS = {        # ordered from least to most detailed
+# Ways of splitting core goods into series, ordered from least to most detailed. "region" is origin region,
+# "section_id" the HS section, "hs2"/"hs4" the 2- and 4-digit customs codes, "iso2" the origin country.
+LEVELS = {
     "National total": [], "Origin region": ["region"], "Section": ["section_id"], "HS2": ["hs2"],
     "Section x region": ["section_id", "region"], "HS2 x region": ["hs2", "region"],
     "HS4": ["hs4"], "HS4 x region": ["hs4", "region"], "HS4 x country": ["hs4", "iso2"],
 }
-CHOSEN_LEVEL = "HS2 x region"
+CHOSEN_LEVEL = "HS2 x region"   # the level the models in step 4 forecast (see section 6 of the report)
 
 
 def level_table(core: pd.DataFrame) -> pd.DataFrame:
+    """For each level of detail: how many series, how complete they are, the normal miss and the 2026 gap.
+
+    "Regular" series have trade in at least 54 of the 60 months of 2021-2025. The normal miss is
+    averaged over 2024 and 2025; the 2026 gap is the same calculation for the war months.
+    """
     rows = []
     for name, keys in LEVELS.items():
         w = wide(core, keys)
@@ -514,7 +451,16 @@ def level_table(core: pd.DataFrame) -> pd.DataFrame:
 
 
 def seasonality(core: pd.DataFrame, calendar: pd.DataFrame) -> dict:
-    """How much of the month-to-month movement is a calendar pattern, and is there a Ramadan effect?"""
+    """How much of the month-to-month movement is a calendar pattern, and is there a Ramadan effect?
+
+    Seasonal share: each month is divided by its year's average (2022-2025), then the share of
+    the remaining variation explained by the month-of-year average is computed, like an R-squared.
+
+    Ramadan: a small least-squares regression of that monthly index on the fraction of the month
+    that is Ramadan, and on the fraction of the *next* month that is Ramadan (goods are often
+    imported ahead of it). Done for all core goods and for food (sections 1-4), where an effect
+    would be most likely. Four years of data make this a rough check, not a precise estimate.
+    """
     out = {}
     ramadan = calendar.set_index("date")["ramadan_days"]
     for name, part in (("core", core), ("food", core[core["section_id"] <= 4])):
@@ -523,6 +469,7 @@ def seasonality(core: pd.DataFrame, calendar: pd.DataFrame) -> dict:
         idx = monthly / monthly.groupby(monthly.index.year).transform("mean")
         month_mean = idx.groupby(idx.index.month).transform("mean")
         out[f"{name}_explained"] = (1 - ((idx - month_mean) ** 2).sum() / ((idx - 1) ** 2).sum()) * 100
+        # Columns: intercept, share of this month in Ramadan, share of next month in Ramadan.
         X = np.column_stack([np.ones(len(idx)), ramadan.reindex(idx.index) / 30, ramadan.shift(-1).reindex(idx.index) / 30])
         coef = np.linalg.lstsq(X, idx.to_numpy(), rcond=None)[0]
         out[f"{name}_ramadan_this"], out[f"{name}_ramadan_next"] = coef[1] * 100, coef[2] * 100
@@ -539,7 +486,11 @@ def seasonality(core: pd.DataFrame, calendar: pd.DataFrame) -> dict:
 
 
 def jumpy_products(df: pd.DataFrame) -> pd.DataFrame:
-    """Which 4-digit products cause most of the simple forecast's misses (general goods, 2024-2025)?"""
+    """Which 4-digit products cause most of the simple forecast's misses (general goods, 2024-2025)?
+
+    A product whose share of the misses is much bigger than its share of value is "jumpy": large,
+    occasional purchases such as aircraft engines, or price-driven goods such as gold.
+    """
     w = wide(df[df["group"] != BULK], ["hs4"])
     w.index = w.index.astype(str)
     miss = sum(months_of(w, y).sub(months_of(w, y - 1).mean(axis=1), axis=0).abs().sum(axis=1) for y in (2024, 2025))
@@ -561,11 +512,6 @@ def biggest_increases(core: pd.DataFrame, region: str, months: list[int], n: int
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
-def signed(x: float) -> str:
-    r = int(round(x))
-    return "0" if r == 0 else f"{r:+d}"
-
-
 def vs_normal(x: float) -> str:
     """-53.2 -> '53% below', 7.1 -> '7% above'."""
     r = int(round(x))
@@ -573,11 +519,13 @@ def vs_normal(x: float) -> str:
 
 
 def names(series: pd.Series) -> str:
+    """4-digit codes with BD changes as a phrase: 'copper plates and sheets (+BD 4.6m) and ...'."""
     parts = [f"{HS4_NAMES.get(code, 'HS ' + code).lower()} ({'+' if v >= 0 else '-'}BD {abs(v):.1f}m)" for code, v in series.items()]
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
 def table_md(df: pd.DataFrame, signed_cols=(), int_cols=(), one_dp_cols=()) -> str:
+    """A markdown table with per-column number formats (signed whole numbers, whole numbers, one decimal)."""
     out = df.copy()
     for c in signed_cols:
         out[c] = out[c].map(lambda v: "" if pd.isna(v) else signed(v))
@@ -589,7 +537,7 @@ def table_md(df: pd.DataFrame, signed_cols=(), int_cols=(), one_dp_cols=()) -> s
 
 
 def yardstick_examples(core: pd.DataFrame, route: pd.DataFrame) -> dict:
-    """Worked numbers used to explain the yardstick, the normal miss and the 2026 periods in plain words."""
+    """Worked numbers used to explain the yardstick, the normal miss and the 2026 periods in the report."""
     monthly = core.groupby("date")["value_bd"].sum() / 1e6
     by_year = {y: monthly[monthly.index.year == y] for y in (2023, 2024, 2025, 2026)}
     avg = {y: s.mean() for y, s in by_year.items()}
@@ -599,8 +547,8 @@ def yardstick_examples(core: pd.DataFrame, route: pd.DataFrame) -> dict:
     month = lambda y, m: by_year[y][by_year[y].index.month == m].iloc[0]
     return {
         "avg": avg,
-        "table": pd.DataFrame({"month": a25.index.strftime("%b"), "actual": a25.to_numpy(),
-                               "forecast": avg[2024], "miss": misses.to_numpy()}),
+        "table": pd.DataFrame({"Month": a25.index.strftime("%b"), "Actual": a25.to_numpy(),
+                               "Forecast": avg[2024], "Miss": misses.to_numpy()}),
         "miss_sum": misses.sum(), "forecast_sum": avg[2024] * 12, "miss_pct": miss_pct,
         "march_2026": month(2026, 3),
         "ruler": {m: {"2026": month(2026, m), "2025": month(2025, m)} for m in (6, 7)},
@@ -611,358 +559,335 @@ def yardstick_examples(core: pd.DataFrame, route: pd.DataFrame) -> dict:
 
 
 def write_report(ctx: dict) -> str:
+    """The step 3 report. Numbers come from `ctx`; the interpretation was written for data to July 2026."""
     g = ctx["groups"]
     core_row, bulk_row, prec_row = g.loc[CORE], g.loc[BULK], g.loc[PRECIOUS]
     s, lv, ri, ex = ctx["season"], ctx["levels"].set_index("level"), ctx["routes"], ctx["examples"]
     regions, sections = ctx["regions"], ctx["sections"]
-    gcc, asia, europe = regions.loc["GCC"], regions.loc["East and South-East Asia"], regions.loc["Europe"]
+    gcc, asia, europe, americas = (regions.loc[r] for r in ("GCC", "East and South-East Asia", "Europe", "Americas"))
     gcc_share = ctx["gcc_share"]
     bulk_changes, bulk_origins = ctx["bulk_changes"], ctx["bulk_origins"]
     period_cols = ["Jan-Feb", *PERIODS]
     y, gr = s["yearly"] / 1e6, s["growth"]
-    jj = ri.loc["2026-06-01":"2026-07-01"].mean()
+    jj = ri.loc["2026-06-01":"2026-07-01"].mean()           # June-July average, as % of normal
     avg25 = ex["avg"][2025]
     march_change = (ex["march_2026"] / avg25 - 1) * 100
     r6, r7 = ex["ruler"][6], ex["ruler"][7]
     pct_vs = lambda a, b: signed((a / b - 1) * 100)
+    chosen = lv.loc[CHOSEN_LEVEL]
 
-    groups_md = g.reset_index().rename(columns={"index": "group"})
-    groups_md["normal range +/-"] = ctx["group_band"].reindex(groups_md["group"]).to_numpy()
-    groups_md = groups_md[["group", "2025 value (BD m)", "% of 2025 value", "% of 2025 weight", "normal miss %",
-                           "normal range +/-", *period_cols]]
+    # --- tables, with readable column names ---
+    groups_md = g.reset_index().rename(columns={"index": "Group", "group": "Group"})
+    groups_md["Normal range (+/-%)"] = ctx["group_band"].reindex(groups_md["Group"]).to_numpy()
+    groups_md = groups_md.rename(columns={"2025 value (BD m)": "2025 value (BD m)", "% of 2025 value": "% of value",
+                                          "% of 2025 weight": "% of weight", "normal miss %": "Normal miss (%)"})
+    groups_md = groups_md[["Group", "2025 value (BD m)", "% of value", "% of weight", "Normal miss (%)",
+                           "Normal range (+/-%)", *period_cols]]
 
     example_md = ex["table"].copy()
-    total_row = pd.DataFrame([{"month": "**Total**", "actual": np.nan, "forecast": ex["forecast_sum"], "miss": ex["miss_sum"]}])
+    total_row = pd.DataFrame([{"Month": "**Total**", "Actual": np.nan, "Forecast": ex["forecast_sum"], "Miss": ex["miss_sum"]}])
     example_md = pd.concat([example_md, total_row], ignore_index=True)
-    for c in ("actual", "forecast", "miss"):
+    for c in ("Actual", "Forecast", "Miss"):
         example_md[c] = example_md[c].map(lambda v: "" if pd.isna(v) else f"{v:,.1f}")
 
     route_md = ri.loc["2026-01-01":, ["core_value", "core_weight", "port_import_teu", "port_total_vessels", "air_import_t"]]
-    route_md.columns = ["core goods value", "core goods weight", "containers unloaded", "ships calling", "air cargo unloaded"]
-    route_md.insert(0, "month", route_md.index.strftime("%b %Y"))
+    route_md.columns = ["Core goods (value)", "Core goods (weight)", "Containers unloaded", "Ships calling",
+                        "Air cargo unloaded"]
+    route_md.insert(0, "Month", route_md.index.strftime("%b %Y"))
 
     def changes_md(table, band, label):
         out = table.copy()
         out.insert(0, label, out.index)
-        out["normal range +/-"] = band
-        return table_md(out[[label, "% of 2025", "normal range +/-", *period_cols]], signed_cols=period_cols,
-                        int_cols=["normal range +/-"], one_dp_cols=["% of 2025"])
+        out["Normal range (+/-%)"] = band
+        out = out.rename(columns={"% of 2025": "% of 2025 value"})
+        return table_md(out[[label, "% of 2025 value", "Normal range (+/-%)", *period_cols]], signed_cols=period_cols,
+                        int_cols=["Normal range (+/-%)"], one_dp_cols=["% of 2025 value"])
 
     bulk_md = bulk_changes.copy()
-    bulk_md.insert(0, "material", bulk_md.index)
+    bulk_md.insert(0, "Material", bulk_md.index)
+    bulk_md = bulk_md.rename(columns={"kt per month (2025)": "kt a month (2025)"})
+    origins_md = bulk_origins.rename(columns={"material": "Material", "origin": "Origin",
+                                              "kt per month, 2025": "kt a month, 2025",
+                                              "kt per month, Mar-Jul 2026": "kt a month, Mar-Jul 2026"})
     jumpy_md = ctx["jumpy"].copy()
     jumpy_md.insert(0, "HS4", jumpy_md.index)
+    jumpy_md = jumpy_md.rename(columns={"product": "Product", "% of misses": "% of misses", "% of value": "% of value"})
     levels_md = ctx["levels"][["level", "series", "regular series", "% of value in regular series", "normal miss %",
-                               "same-month forecast miss %", "2026 gap %"]]
+                               "same-month forecast miss %", "2026 gap %"]].copy()
+    levels_md.columns = ["Level", "Series", "Regular series", "% of value in regular series", "Normal miss (%)",
+                         "Same-month rule miss (%)", "Gap in Mar-Jul 2026 (%)"]
 
-    return f"""# Step 3: Exploring the data
+    return f"""
+# Step 3: Exploring the data
 
-*Generated by `src/explore.py` from the step 2 tables. Re-running the script refreshes every number.*
+Before building a forecasting model I wanted to understand the data well enough to answer three practical
+questions. Should all imports be modelled together? What does a normal year look like, and so what does a
+model need to know? And how finely can imports be split before ordinary noise is as large as the war itself?
+Along the way this step takes a first look at what happened in 2026.
 
-Before building any forecasting models, this step looks closely at the data to answer six questions:
+It uses imports from January 2021 to {ex['last_import']:%B %Y}, the latest month published. Port figures run
+to {ex['last_port']:%B %Y} and airport figures to {ex['last_air']:%B %Y}, because they are published sooner.
 
-1. Do all imports behave the same way, or should some be treated separately?
-2. What does a normal year look like?
-3. Which origin countries were hit in 2026, and where did goods come from instead?
-4. Which kinds of goods were hit hardest?
-5. Did goods stop arriving by sea and air, and if so, how did they get here?
-6. How detailed can the forecasting models be?
+## Key findings
 
-The answers set the plan for step 4.
+- **Three kinds of imports behave very differently.** Everyday "core" goods are {core_row['% of 2025 value']:.0f}%
+  of import value and fairly steady; bulk raw materials are {bulk_row['% of 2025 weight']:.0f}% of weight but
+  arrive in lumpy shiploads; gold and jewellery swing with the gold price. They are analysed separately.
+- **Imports are only weakly seasonal but they grow**, so a model needs the recent level of imports more than
+  the calendar.
+- **Core goods fell {abs(core_row['March']):.0f}% below normal in March 2026** and were still
+  {abs(core_row['Jun-Jul']):.0f}% below in June-July.
+- **Goods from GCC countries rose** while those from East Asia and the Americas stayed far below normal, a
+  first sign that route mattered more than product.
+- **Containers and air cargo fell much further than the goods arriving.** In June-July containers unloaded
+  were at {jj['port_import_teu']:.0f}% of normal while core goods were back to {jj['core_weight']:.0f}% by
+  weight, so a large share must have come another way, most likely by road.
+- **The models will forecast each 2-digit customs chapter from each origin region.** Finer splits have so
+  much normal noise that the war barely stands out.
 
-**What data this uses.** Imports from January 2021 to {ex['last_import']:%B %Y} (the latest month the portal has published).
-Port figures run to {ex['last_port']:%B %Y} and airport figures to {ex['last_air']:%B %Y}, because those are published sooner.
+## How changes are measured in this step
 
-## Words used in this report
+Every change in this report compares a 2026 figure with the average month of 2025 for the same thing. For
+example, core goods averaged BD {avg25:,.1f}m a month in 2025 and were BD {ex['march_2026']:,.1f}m in March
+2026, so March is reported as {signed(march_change)}%.
 
-{glossary.table(3, ["core_goods", "national_total", "normal", "periods", "origin_region", "section", "hs_codes",
-                    "series", "regular", "simple_rule", "normal_miss", "normal_range", "containers", "units"])}
+Comparing with the same month a year earlier sounds more natural, but a single month carries its own noise,
+and that noise leaks into the comparison:
 
----
-
-## Before you start: how to read the numbers
-
-### Step 1: "Normal" means an average month in 2025
-
-To say whether a month in 2026 was unusually low, we need something to compare it with. Throughout this report that is
-**the average month in 2025** for the same thing.
-
-> Example: in 2025, core goods imports (defined in section 1) averaged **BD {avg25:,.1f}m a month**. In March 2026 they
-> were BD {ex['march_2026']:,.1f}m. So March 2026 was **{signed(march_change)}%** compared with normal.
-
-Every "+" or "-" number in the tables is worked out this way: the 2026 figure compared with the 2025 average month.
-
-### Step 2: Why not compare with the same month last year?
-
-Comparing March 2026 with March 2025 sounds more natural, but one month carries its own random ups and downs, and those
-leak into the answer. For core goods:
-
-| Month | 2026 | Same month in 2025 | Compared with same month | Compared with 2025 average month |
+| Month | 2026 | Same month in 2025 | Against the same month | Against the 2025 average month |
 |---|---|---|---|---|
 | June | {r6['2026']:,.0f} | {r6['2025']:,.0f} | {pct_vs(r6['2026'], r6['2025'])}% | {pct_vs(r6['2026'], avg25)}% |
 | July | {r7['2026']:,.0f} | {r7['2025']:,.0f} | {pct_vs(r7['2026'], r7['2025'])}% | {pct_vs(r7['2026'], avg25)}% |
 
-*BD million.* June 2025 happened to be a weak month, so June 2026 looks better against it. July 2025 was a strong month,
-so July 2026 looks worse against it. The answer depends on whether last year's month was a good or a bad one.
-We also tested both methods on 2024 and 2025, two normal years: the "same month last year" method missed by more
-(section 6). So the average month is the steadier yardstick.
+*Core goods, BD million.*
 
-This is only a yardstick for exploring. In step 5 each month of 2026 is compared with a model's forecast for that
-specific month, which can allow for growth, December peaks and Ramadan.
+June 2025 happened to be a weak month and July 2025 a strong one, so the same-month comparison flatters June
+2026 and penalises July 2026. Tested on two normal years, the same-month rule also missed by more at every
+level of detail (section 6). The average month is only a yardstick for exploring, though. From step 5 onward,
+each month of 2026 is compared with a model's forecast for that specific month, which can allow for growth,
+December peaks and Ramadan.
 
-### Step 3: The "normal miss": how much imports wobble in a normal year
+A change only means something if it is bigger than the normal ups and downs, so two measures of normal
+movement are used:
 
-A 2026 drop only matters if it is bigger than the usual ups and downs. To measure those, we pretend to forecast a
-normal year with the simple rule above and see how far off it is:
-
-1. **Forecast:** take the average month of the previous year, and use it as the forecast for every month.
-2. **Miss:** for each month, work out how far the actual value was from the forecast, ignoring whether it was above or below.
-3. **Normal miss:** add up the misses and divide by the forecasts added up, giving a percentage.
-
-Worked example, core goods in 2025 (forecast = the 2024 average month, BD million):
+- **Normal miss.** Forecast every month of a year as the previous year's average month, add up the misses
+  (ignoring whether each month was above or below, so they can't cancel out) and divide by the total
+  forecast. For core goods this was {ex['miss_pct'][2024]:.1f}% in 2024 and {ex['miss_pct'][2025]:.1f}% in
+  2025, so about {core_row['normal miss %']:.0f}%. The 2025 calculation is shown below.
+- **Normal range.** A single month can stray further than the average miss. For each month of 2023-2025 I
+  measured how far it was from the previous year's average month; the normal range is the distance that 9
+  months out of 10 stayed within. It is the grey band on the charts, and a dot outside the band is more than
+  ordinary noise.
 
 {md_table(example_md)}
 
-2025 miss = {ex['miss_sum']:,.1f} / {ex['forecast_sum']:,.0f} = **{ex['miss_pct'][2025]:.1f}%**. The same calculation for 2024
-gives {ex['miss_pct'][2024]:.1f}%. The **normal miss** is the average of the two years: about {core_row['normal miss %']:.0f}%.
+*Core goods in 2025, forecast = the 2024 average month (BD million). Miss = {ex['miss_sum']:,.1f} /
+{ex['forecast_sum']:,.0f} = {ex['miss_pct'][2025]:.1f}%.*
 
-The miss ignores whether a month is above or below the forecast, so a high month and a low month can't cancel out
-and make a bad forecast look good.
-
-### Step 4: The "normal range": how far a single month can stray
-
-The normal miss is an *average* over months. A single month can stray further than the average even in a normal year,
-so single months (and two-month periods) are compared with the **normal range** instead:
-
-- For each month in 2023, 2024 and 2025, work out how far it was from the previous year's average month.
-- The normal range is the distance that 9 months out of 10 stayed within.
-
-> Example: if a section's normal range is +/-20%, a 2026 month that is 15% below normal is not unusual,
-> but one that is 50% below is.
-
-In the charts this range is the **grey band**. A dot outside the band is a real change, not just normal ups and downs.
-
-### Step 5: The 2026 periods
-
-The months of 2026 are grouped by what was happening (dates from `data/reference/events.csv`):
+The months of 2026 are grouped by what was happening (dates and sources in `data/reference/events.csv`):
 
 | Period | What was happening |
 |---|---|
 {chr(10).join(f"| **{p}** | {period_event(p)} |" for p in period_cols)}
 
----
-
-## 1. Not all imports behave the same
+## 1. Three kinds of imports
 
 ![Monthly imports](figures/step3_1_monthly_imports.png)
 
-**What we did:** split imports into three groups and checked how each one behaves.
+Imports were split into three groups:
 
-| Group | What it is |
-|---|---|
-| **Core goods** | Everything except the two groups below: machinery, cars, food, clothing, chemicals and so on. The everyday supply chains. |
-| **Bulk materials** | Iron ore, alumina, coke and construction minerals. Huge shiploads for a few factories. |
-| **Precious metals** | Gold, silver and jewellery. |
+- **Core goods**: everything except the two groups below, from machinery and vehicles to food, clothing and
+  chemicals. These are the everyday supply chains and the main subject of the project.
+- **Bulk materials**: iron ore, alumina, coke and construction minerals, delivered in shiploads to a few plants.
+- **Precious metals**: gold, silver and jewellery (customs chapter 71).
 
-**What we found:**
+{table_md(groups_md, signed_cols=period_cols, int_cols=["2025 value (BD m)", "% of value", "% of weight", "Normal miss (%)", "Normal range (+/-%)"])}
 
-{table_md(groups_md, signed_cols=period_cols, int_cols=["2025 value (BD m)", "% of 2025 value", "% of 2025 weight", "normal miss %", "normal range +/-"])}
+*The last four columns compare each 2026 period with the 2025 average month.*
 
-*The last four columns compare each 2026 period with the 2025 average month (step 1).*
+Core goods are {core_row['% of 2025 value']:.0f}% of import value and move relatively little in a normal year
+(a normal miss of about {core_row['normal miss %']:.0f}%). They were {vs_normal(core_row['Jan-Feb'])} normal in
+January-February, {vs_normal(core_row['March'])} normal in March and still {vs_normal(core_row['Jun-Jul'])}
+normal by June-July. Bulk materials are only {bulk_row['% of 2025 value']:.0f}% of value but
+{bulk_row['% of 2025 weight']:.0f}% of weight; they fell further and stayed down
+({vs_normal(bulk_row['Jun-Jul'])} normal in June-July). Precious metals follow the gold price. They were already
+{vs_normal(prec_row['Jan-Feb'])} normal before the war, and their normal miss of about
+{prec_row['normal miss %']:.0f}% is {prec_row['normal miss %'] / core_row['normal miss %']:.0f} times that of core goods.
 
-- **Core goods** are {core_row['% of 2025 value']:.0f}% of import value. They were {vs_normal(core_row['Jan-Feb'])} normal in Jan-Feb,
-  {vs_normal(core_row['March'])} normal in March, and {vs_normal(core_row['Jun-Jul'])} normal by Jun-Jul.
-- **Bulk materials** are only {bulk_row['% of 2025 value']:.0f}% of the value but {bulk_row['% of 2025 weight']:.0f}% of the weight.
-  They collapsed and stayed down: {vs_normal(bulk_row['Jun-Jul'])} normal in Jun-Jul.
-- **Precious metals** follow the gold price. They were already {vs_normal(prec_row['Jan-Feb'])} normal in Jan-Feb, before
-  the war, and their normal miss is about {prec_row['normal miss %']:.0f}%.
-
-**Why it matters:** mixing the three would hide what happened. A jump in gold or a single iron ore ship could make
-supply chains look better or worse than they were. From here on, **core goods are the main subject**, and the other two
-groups are reported separately.
-
----
+Mixing the three would let one ore carrier or one gold consignment decide whether supply chains looked
+better or worse than they were. From here on core goods are the main subject and the other two groups are
+reported separately. The cost is that bulk materials and precious metals get a simpler treatment.
 
 ## 2. What a normal year looks like
 
 ![Seasonal pattern](figures/step3_5_patterns.png)
 
-**What we did:** compared each month with its own year's average (left chart), and looked at yearly totals (right chart).
+Two things matter for forecasting: how seasonal imports are, and whether they trend.
 
-**What we found:**
+Seasonality is weak. When each month is compared with its own year's average (left chart), only about
+{s['core_explained']:.0f}% of the month-to-month movement in core goods repeats from year to year. The
+clearest pattern is December, about {s['dec_index'] - 100:.0f}% above a typical month. Ramadan makes no clear
+difference either: for food, a full month of Ramadan goes with {signed(s['food_ramadan_this'])}% that month
+and {signed(s['food_ramadan_next'])}% the month before, well within the normal ups and downs. With only four
+years of data this is a rough check rather than a precise estimate.
 
-1. **Seasons barely matter.** Only about {s['core_explained']:.0f}% of the month-to-month movement in core goods repeats
-   every year. The rest is random. The clearest pattern is December, about {s['dec_index'] - 100:.0f}% above a typical month.
-2. **Ramadan makes no clear difference.** For food, a full month of Ramadan changes imports by about
-   {signed(s['food_ramadan_this'])}% that month and {signed(s['food_ramadan_next'])}% the month before. That is within the normal ups and downs.
-3. **Imports grow over time.** Core goods changed by {signed(gr[2023])}% in 2023, {signed(gr[2024])}% in 2024 and
-   {signed(gr[2025])}% in 2025, and were still rising going into 2026 ({vs_normal(core_row['Jan-Feb'])} normal in Jan-Feb).
-4. **2021 (COVID rules) was smaller but had a similar shape.** Core goods were BD {y[2021]:,.0f}m in 2021 and
-   BD {y[2022]:,.0f}m in 2022. When malls and restaurants closed in May-June 2021, imports were
-   {s['may_jun_2021']:.0f}% of that year's average month, against {s['may_jun_other']:.0f}% in other years, so the closures barely show.
+Imports do trend. Core goods changed by {signed(gr[2023])}% in 2023, {signed(gr[2024])}% in 2024 and
+{signed(gr[2025])}% in 2025, and were {vs_normal(core_row['Jan-Feb'])} the 2025 average in January-February
+2026. The year 2021, under COVID rules, was smaller (BD {y[2021]:,.0f}m against BD {y[2022]:,.0f}m in 2022) but
+had a similar shape. Even the closures of malls and restaurants in May-June 2021 barely show: those months
+were {s['may_jun_2021']:.0f}% of that year's average month, against {s['may_jun_other']:.0f}% in other years.
 
-**Why it matters:**
-- Weak seasons explain why "the same month last year" is a worse yardstick than "the average month" (before-you-start, step 2).
-- Growth means the models need to know the *recent* level of imports, not just last year's pattern.
-- Step 4 will test the models both with and without 2021.
+For the models this means the recent level of imports matters more than the calendar, so they are given
+averages of the last 3, 6 and 12 months. Calendar effects are small but are still offered as inputs, and 2021
+is tested both with and without.
 
----
-
-## 3. Which origins were hit, and where goods came from instead
+## 3. Where goods came from
 
 ![Origins](figures/step3_3_regions.png)
 
-**What we did:** grouped core goods by the region they came from and compared each period of 2026 with normal.
-
-**What we found:**
+The customs data records where goods came from, not how they travelled, so origin is the best available clue
+to route. Countries are grouped into regions by how goods normally reach Bahrain: GCC goods can come by road
+over the King Fahd Causeway, while goods from East Asia, Europe or the Americas normally come by sea through
+the Strait of Hormuz, or by air.
 
 {changes_md(regions, ctx['region_band'], 'Origin region')}
 
-*"Normal range" is explained in before-you-start, step 4: a change inside it is not unusual. "Other and not specified"
-(under 1% of value) is left out.*
+*Core goods. "Other and not specified" (under 1% of value) is left out.*
 
-1. **Goods from GCC countries went up.** They were {vs_normal(gcc['Apr-May'])} normal in Apr-May and {vs_normal(gcc['Jun-Jul'])}
-   normal in Jun-Jul. Their share of core goods rose from {gcc_share['2025']:.0f}% in 2025 to {gcc_share['Apr-May']:.0f}% in Apr-May.
-   - Why this makes sense: GCC suppliers can send goods by road through Saudi Arabia, and UAE and Omani ports on the
-     Gulf of Oman and Arabian Sea are outside the Strait of Hormuz.
-   - The biggest increases in Jun-Jul (compared with Jun-Jul 2025) were {names(ctx['gcc_drivers'])}.
-2. **Goods from East and South-East Asia stayed down longest.** This is the biggest origin ({asia['% of 2025']:.0f}% of core goods).
-   It was {vs_normal(asia['Apr-May'])} normal in Apr-May and still {vs_normal(asia['Jun-Jul'])} normal in Jun-Jul. These goods
-   normally come by container ship through Hormuz.
-3. **Goods from Europe came back faster**: {vs_normal(europe['Jun-Jul'])} normal in Jun-Jul. Part of this was a few large
-   aircraft-related deliveries: {names(ctx['europe_drivers'])}. Even leaving out aircraft, engines and their parts,
-   Europe was {vs_normal(ctx['europe_ex_aircraft'])} normal, still well ahead of Asia.
+Goods from GCC countries went up: {vs_normal(gcc['Apr-May'])} normal in April-May and
+{vs_normal(gcc['Jun-Jul'])} normal in June-July. Their share of core goods rose from {gcc_share['2025']:.0f}% in
+2025 to {gcc_share['Apr-May']:.0f}% in April-May. That fits the geography: GCC suppliers can send goods by road
+through Saudi Arabia, and the UAE's and Oman's ports on the Gulf of Oman and the Arabian Sea are outside the
+Strait. The biggest increases in June-July, compared with June-July 2025, were {names(ctx['gcc_drivers'])}.
 
-**Why it matters:** where goods come from is our best clue to how they travel. This is the starting point for step 6 (routes).
+Goods from East and South-East Asia, the biggest origin at {asia['% of 2025']:.0f}% of core goods, stayed down
+longest: {vs_normal(asia['Apr-May'])} normal in April-May and still {vs_normal(asia['Jun-Jul'])} in June-July.
+These goods normally come by container ship through Hormuz. The Americas were similar
+({vs_normal(americas['Jun-Jul'])} normal in June-July).
 
----
+Goods from Europe came back faster ({vs_normal(europe['Jun-Jul'])} normal in June-July), partly because of a
+few large aircraft-related deliveries: {names(ctx['europe_drivers'])}. Leaving out aircraft, engines and their
+parts, Europe was {vs_normal(ctx['europe_ex_aircraft'])} normal, still well ahead of Asia. Step 6 looks at why.
 
-## 4. Which kinds of goods were hit
+## 4. Which goods were hit
 
 ![Sections](figures/step3_4_sections.png)
 
-**What we did:** grouped core goods into product sections (the top level of the customs code) and compared each period
-of 2026 with normal.
-
-**What we found:**
+Core goods were grouped into product sections, the top level of the customs classification.
 
 {changes_md(sections, ctx['section_band'], 'Section')}
 
-*Sections under {MIN_SECTION_SHARE}% of 2025 value, and the national special codes (confidential goods), are left out.*
+*Sections under {MIN_SECTION_SHARE}% of 2025 value, and the national special codes (confidential goods), are
+left out.*
 
-1. **Every section fell in March.**
-2. **By Jun-Jul most were back inside their normal range.** Food came back first: animal products, vegetable products
-   and fats and oils were at or above normal.
-3. **Vehicles and clothing were still well below normal** in Jun-Jul, outside their normal range.
+Every section fell in March. By June-July most were back inside their normal range, with food first: animal
+products, vegetable products and fats and oils were at or above normal. Vehicles and clothing were still well
+below normal and outside their range.
 
-### Bulk materials (by weight)
+### Bulk materials, by weight
 
-{table_md(bulk_md, signed_cols=period_cols, int_cols=["kt per month (2025)"])}
+{table_md(bulk_md, signed_cols=period_cols, int_cols=["kt a month (2025)"])}
 
-Where they came from (any origin with at least 10% of that material, in 2025 or in Mar-Jul 2026):
+The main origins (any with at least 10% of a material's weight in 2025 or in March-July 2026):
 
-{table_md(bulk_origins, one_dp_cols=["kt per month, 2025", "kt per month, Mar-Jul 2026"])}
+{table_md(origins_md, one_dp_cols=["kt a month, 2025", "kt a month, Mar-Jul 2026"])}
 
-1. **Construction minerals show route exposure clearly.** Supplies from Oman, which have to pass through the Strait of
-   Hormuz, stopped. Supplies from the UAE, inside the Gulf, went up.
-2. **Alumina from Australia fell sharply**, and new suppliers appeared.
-3. **Iron ore was already {vs_normal(bulk_changes.loc['Iron ore', 'Jan-Feb'])} normal in Jan-Feb**, before the war, so not all
-   of its fall was caused by the war.
-4. **Coke from Kuwait** doesn't need the Strait, but it also had no shipments in May-July. That may be because the factories
-   needed less (Alba, the aluminium smelter, was attacked on 28 March), not just because of routes.
+Construction minerals show route exposure most clearly: supplies from Oman, which have to pass through the
+Strait, stopped, while supplies from the UAE, inside the Gulf, went up. Alumina from Australia fell sharply and
+new suppliers appeared. But bulk materials also mix in a second effect. Iron ore was already
+{vs_normal(bulk_changes.loc['Iron ore', 'Jan-Feb'])} normal in January-February, before the war, and coke from
+Kuwait, which doesn't need the Strait, also stopped in May-July, possibly because plants needed less (the
+aluminium smelter, Alba, was attacked on 28 March). Because blocked routes and lower demand can't be told apart
+here, bulk materials stay separate from core goods.
 
-**Why it matters:** bulk materials mix two effects, blocked routes and factories using less, so they are kept separate
-from core goods.
-
----
-
-## 5. How did goods arrive?
+## 5. How goods arrived
 
 ![Routes](figures/step3_2_routes.png)
 
-**What we did:** compared goods arriving with the port and airport figures. Each number is that month as % of the 2025 average month.
-
 {table_md(route_md, int_cols=list(route_md.columns[1:]))}
 
-*Port = Khalifa Bin Salman Port, Bahrain's container port. Import figures stop at {ex['last_import']:%B}; port and airport
-figures are published sooner.*
+*Each month as % of that series' 2025 monthly average. Port = Khalifa Bin Salman Port, Bahrain's container
+port. Import figures stop at {ex['last_import']:%B}; port and airport figures are published sooner.*
 
-**What we found:**
+In June-July, core goods were back to {jj['core_value']:.0f}% of normal by value and {jj['core_weight']:.0f}%
+by weight. Containers unloaded at the port, though, were only at {jj['port_import_teu']:.0f}% of normal and
+air cargo at {jj['air_import_t']:.0f}%. A much bigger share than usual must therefore have arrived another way.
+The data covers the container port and the airport, so the most likely other way is by road over the King
+Fahd Causeway from Saudi Arabia, although general cargo ships and smaller ports are possible too. The rise in
+goods from GCC countries points the same way. This is the main route finding so far, and step 6 tests it
+properly.
 
-1. In Jun-Jul, core goods were back to **{jj['core_value']:.0f}%** of normal by value and **{jj['core_weight']:.0f}%** by weight.
-2. But containers unloaded at the port were only **{jj['port_import_teu']:.0f}%** of normal, and air cargo **{jj['air_import_t']:.0f}%**.
-3. So a much bigger share than usual must have arrived another way.
-4. The data covers the container port and the airport, so the most likely other way is **by road over the King Fahd
-   Causeway** from Saudi Arabia (smaller ports are also possible).
-5. Section 3 points the same way: goods from GCC countries went up.
-
-**Why it matters:** this is the main route finding so far. Step 6 tests it properly.
-
----
-
-## 6. How detailed can the models be?
+## 6. How much detail the models can handle
 
 ![Levels](figures/step3_6_levels.png)
 
-**What we did:** worked out the normal miss (before-you-start, step 3) at different levels of detail, from one national total
-down to every product from every country.
+The last question is how finely to split core goods for the models. I worked out the normal miss at levels
+of detail from the national total down to each 4-digit product from each country. A series is regular if it
+has imports in at least 54 of the 60 months of 2021-2025. The "same-month rule" uses the same month a year
+earlier as the forecast, and the 2026 gap is the same calculation for March-July 2026.
 
-- A **series** is one line of monthly numbers, for example "HS2 chapter 84 (machinery) from Europe".
-- A **regular** series has imports in at least 54 of the 60 months of 2021-2025.
-- **Same-month forecast miss** is the normal miss if you use "the same month last year" as the forecast instead.
-- **2026 gap** is the same calculation for March-July 2026.
+{table_md(levels_md, int_cols=["Normal miss (%)", "Same-month rule miss (%)", "Gap in Mar-Jul 2026 (%)"], one_dp_cols=["% of value in regular series"])}
 
-**What we found:**
+The national total is easy to forecast (a normal miss of about {lv.loc['National total', 'normal miss %']:.0f}%),
+and the 2026 gap of about {lv.loc['National total', '2026 gap %']:.0f}% stands out clearly. The more detail,
+though, the bigger the normal miss, because in a large total one product's high month cancels another's low
+month, and splitting the total stops that cancelling. At section level the 2026 gap is
+{lv.loc['Section', '2026 gap %'] / lv.loc['Section', 'normal miss %']:.1f} times the normal miss; at 4-digit
+level it is only {lv.loc['HS4', '2026 gap %'] / lv.loc['HS4', 'normal miss %']:.1f} times; and for each product
+from each country the normal miss ({lv.loc['HS4 x country', 'normal miss %']:.0f}%) is almost as large as the
+war's effect. The average-month rule beats the same-month rule at every level, so it is the simple forecast the
+models have to beat.
 
-{table_md(levels_md, int_cols=["normal miss %", "same-month forecast miss %", "2026 gap %"], one_dp_cols=["% of value in regular series"])}
-
-1. **The national total is easy to forecast** (normal miss about {lv.loc['National total', 'normal miss %']:.0f}%), and the
-   2026 gap (about {lv.loc['National total', '2026 gap %']:.0f}%) is far bigger. The crisis clearly shows.
-2. **The more detail, the bigger the normal miss.** Big totals hide the ups and downs of individual products, because one
-   product's high month cancels another's low month. Split them up and the cancelling stops.
-   - At section level, the 2026 gap is {lv.loc['Section', '2026 gap %'] / lv.loc['Section', 'normal miss %']:.1f} times the normal miss.
-   - At HS4 level, it is only {lv.loc['HS4', '2026 gap %'] / lv.loc['HS4', 'normal miss %']:.1f} times.
-   - For each product from each country, the normal miss ({lv.loc['HS4 x country', 'normal miss %']:.0f}%) is almost as big as the crisis itself.
-3. **"The average month" beats "the same month last year" at every level**, so it is the simple forecast the models must beat.
-
-A few products cause a lot of the ups and downs (general goods including precious metals, 2024-2025):
+A few products cause a disproportionate share of the misses (general goods including precious metals,
+2024-2025):
 
 {table_md(jumpy_md, one_dp_cols=["% of misses", "% of value"])}
 
-*% of misses: the share of all the simple forecast's misses that came from this product.*
+Gold and jewellery are part of why precious metals are kept separate. Aircraft engines and parts are large,
+occasional purchases; they stay in core goods, but step 5 checks them so that one delivery isn't mistaken for a
+recovery.
 
-- Gold and jewellery are why precious metals are kept separate.
-- Aircraft engines and parts are large, occasional purchases. They stay in core goods, but step 5 will check them so that
-  one delivery isn't mistaken for a recovery.
+## Decisions for step 4
 
-**Why it matters:** this decides how detailed the models in step 4 should be.
-
----
-
-## 7. What this means for step 4
-
-1. **Three groups, handled separately.** Core goods are the main analysis. Bulk materials (by weight) and precious metals
-   are reported separately.
-2. **The simple forecast to beat** is "the previous year's average month". "The same month last year" is reported too.
-3. **The models forecast each HS2 chapter from each origin region** ({lv.loc['HS2 x region', 'regular series']:,} regular series
-   covering {lv.loc['HS2 x region', '% of value in regular series']:.1f}% of core goods). Patchy series are pooled into one
-   "other" series per section and region. Adding the forecasts up gives totals by section, by region and for the whole
-   country that all agree with each other. HS4 forecasts are used as a check and for close-ups (for example cars or phones).
-4. **Results are reported for the whole country, by section and by region**, where the crisis is clearly bigger than the
-   normal miss. More detailed results are only shown with their uncertainty range.
-5. **The models get features for the recent level and trend** (averages over the last 3, 6 and 12 months), because imports
+1. **Core goods are the main analysis.** Bulk materials (by weight) and precious metals are reported
+   separately, because one shipment can swing them.
+2. **The models forecast each 2-digit chapter from each origin region.** That gives
+   {int(chosen['regular series']):,} regular series covering {chosen['% of value in regular series']:.1f}% of core
+   goods, at a level where the war is still clearly bigger than normal noise. Patchy series are pooled into one
+   "other" series per section and region. Adding the forecasts up gives totals by section, by region and for the
+   whole country that agree with each other. The cost is that a shift between two products in the same chapter
+   is invisible to the models.
+3. **Results are reported nationally, by section and by region**, where the effect is clearly bigger than the
+   normal miss. More detailed results are only shown with their uncertainty.
+4. **The simple forecast to beat is the previous year's average month**, with the same-month rule reported too.
+5. **The models get the recent level and trend** (averages over the last 3, 6 and 12 months), because imports
    were growing going into 2026.
 6. **2021 is tested both ways**: kept in with a COVID flag, and left out.
+
+## Limitations
+
+- The yardstick in this step ignores growth. Imports were rising going into 2026, so falls measured against
+  2025 understate how far imports were below where they would otherwise have been. Step 5 corrects this by using
+  model forecasts.
+- The normal range is based on three years (36 months per series), so it is a rough guide, not a precise 90%
+  interval.
+- Origin region is a proxy for route. A good from China could have come by air, or have been landed in Saudi
+  Arabia and trucked in.
+- Customs records the month goods were declared, which is not always the month they arrived. Periods of two
+  months soften this.
+
+{footer("src/explore.py")}
 """
 
 
 def main() -> int:
+    """Load the data, run every analysis, draw the six charts and write the report."""
     df = load_imports()
     route = pd.read_parquet(PROCESSED_DIR / "route_monthly.parquet").set_index("date")
     calendar = pd.read_csv(REFERENCE_DIR / "calendar.csv", parse_dates=["date"])
     core = df[df["group"] == CORE]
 
-    extend_periods(df["date"].max())
+    extend_periods(df["date"].max())          # add a period for any months published after July
     ctx: dict = {"latest_month": df["date"].max()}
     ctx["groups"] = group_summary(df)
     wg = wide(df, ["group"])
@@ -981,8 +906,10 @@ def main() -> int:
     ctx["jumpy"] = jumpy_products(df)
     ctx["gcc_drivers"] = biggest_increases(core, "GCC", [6, 7])
     ctx["europe_drivers"] = biggest_increases(core, "Europe", [6, 7], n=2)
+    # Europe again without aircraft, engines and their parts, to check its recovery isn't just a few deliveries.
     europe = core[(core["region"] == "Europe") & ~core["hs4"].astype(str).isin(AIRCRAFT_HS4)]
     ctx["europe_ex_aircraft"] = change_vs_2025(wide(europe, []), [6, 7]).iloc[0]
+    # GCC share of core goods in 2025 and in each 2026 period.
     wr = wide(core, ["region"])
     ctx["gcc_share"] = {"2025": months_of(wr, 2025).loc["GCC"].sum() / months_of(wr, 2025).to_numpy().sum() * 100}
     for p, months in {"Jan-Feb": PRE_WAR, **PERIODS}.items():
@@ -991,6 +918,7 @@ def main() -> int:
 
     fig_monthly(df)
     fig_routes(ctx["routes"])
+    # Both dot plots share one x-axis so they can be compared; it runs from -100% to just past the largest rise.
     shown = pd.concat([ctx["regions"], ctx["sections"]])[list(PERIODS)]
     xlim = (-100, max(50, np.ceil(shown.max().max() / 10) * 10 + 10))
     for table, band, title, name, dp in [
@@ -1010,7 +938,7 @@ def main() -> int:
     fig_patterns(core)
     fig_levels(ctx["levels"], CHOSEN_LEVEL)
 
-    REPORT_PATH.write_text(write_report(ctx), encoding="utf-8")
+    write_markdown(REPORT_PATH, write_report(ctx))
     print(f"Wrote {REPORT_PATH.relative_to(ROOT)} and 6 figures in {FIG_DIR.relative_to(ROOT)}/")
     return 0
 

@@ -9,17 +9,37 @@ Reads data/raw/ and writes:
   data/reference/hs_sections.csv        HS chapter -> section lookup
   reports/step2_cleaning_report.md      what was changed, and the checks that passed
 
-What "cleaning" means here (all decisions are based on profiling the real files):
-  * the six yearly files are combined into one table with the same columns;
-  * separate shipments of the same product from the same country in the same
-    month are added together (12 rows in 6 pairs);
-  * each 8-digit code gets its parents: 6-digit, 4-digit, chapter and section;
-  * each product and country gets one consistent description;
-  * bulk raw materials (iron ore, alumina, coke, construction minerals) are
-    labelled, because they dominate import weight;
-  * odd rows are flagged, never dropped, so totals still match the official figures;
-  * in the port's general cargo figures, months typed with a decimal point instead of
-    a thousands separator are repaired and flagged (see fix_general_cargo).
+The guiding rule: change as little as possible, and make every change visible
+------------------------------------------------------------------------------
+Every decision below came from profiling the real files first. The official monthly totals
+must survive cleaning exactly, so nothing is dropped. Rows that look wrong are flagged
+instead, and each analysis decides what to do with them.
+
+1. **Combine the years.** ``loaders.load_imports`` reads the six yearly files into the same
+   columns. Each year is processed separately (no product-country-month spans two years),
+   which keeps memory low.
+2. **Add up repeated rows.** A few products appear twice for the same country and month (6
+   pairs in 1.76 million rows). They have different values, so they are separate shipments,
+   not duplicates; they are added together so each product-country-month is one row. The
+   script stops if two rows for the same key use different units, because their quantities
+   could not be added.
+3. **Check the totals.** Monthly value and weight are compared before and after, to 12
+   significant figures. The script stops if anything changed.
+4. **One description per code.** Product and country descriptions are worded slightly
+   differently in different years, so each code gets the wording from the latest year it
+   appears in.
+5. **Add the classification.** Each 8-digit code gets its 6-digit, 4-digit and 2-digit
+   parents, its HS section and its product group (see reference.py).
+6. **Flag odd rows.** Zero weight, zero or negative value, and value per kg above BD 100,000
+   (more than gold) are flagged, not removed. Together they are about 0.2% of value.
+7. **Route figures.** The port and airport files are put side by side, one row per month. The
+   port's general cargo file has 2026 months typed with a decimal point for a thousands
+   separator; those are repaired and marked (see ``fix_general_cargo``).
+
+Pros of this approach: totals still match the official statistics, every change is recorded,
+and an analysis can always go back to the unflagged rows. Cons: flagged rows stay in the
+totals, so an unusual row can still affect a small series (the models in step 4 reduce this
+by working with larger groups).
 """
 
 from __future__ import annotations
@@ -33,13 +53,16 @@ import pandas as pd
 from config import DATASETS, RAW_DIR, REFERENCE_DIR, ROOT
 from loaders import load_imports, load_route
 from reference import DEFAULT_GROUP, PRODUCT_GROUPS, build_calendar, chapter_to_section, hs_sections_table
+from reporting import footer, md_table, write_markdown
 
 PROCESSED_DIR = ROOT / "data" / "processed"
 REPORT_PATH = ROOT / "reports" / "step2_cleaning_report.md"
 
-KEYS = ["year", "month", "hs8", "iso2"]
+KEYS = ["year", "month", "hs8", "iso2"]   # one clean row per product, origin country and month
 IMPLAUSIBLE_BD_PER_KG = 100_000  # above the price of gold (~30-50k BD/kg); almost certainly a data-entry error
 
+# Series names in the portal's route files -> short column names in route_monthly.parquet.
+# Any series not listed here stops the script, so a renamed or added series is noticed.
 ROUTE_SERIES = {
     "port_containers": {
         "Imports Containers (TEUs)": "port_import_teu",
@@ -69,7 +92,12 @@ GENERAL_CARGO_TYPO_BELOW = 1_000   # every correctly typed month since 2019 is a
 # Imports
 # ---------------------------------------------------------------------------
 def merge_repeats(raw: pd.DataFrame) -> pd.DataFrame:
-    """Add together rows with the same year, month, product and country."""
+    """Add together rows with the same year, month, product and country.
+
+    Value, weight and quantity are summed. ``n_shipments`` records how many rows were combined,
+    so merged rows can always be found again.
+    """
+    # "#N/A" in the unit column means no unit was recorded; treat it as missing.
     raw = raw.assign(unit=raw["unit"].replace({"#N/A": np.nan, "nan": np.nan}))
     units_per_key = raw.groupby(KEYS, sort=False)["unit"].nunique()
     if (units_per_key > 1).any():
@@ -86,7 +114,11 @@ def merge_repeats(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def latest_wording(table: pd.DataFrame, key: str, text: str) -> pd.Series:
-    """For each code, the wording from the latest year it appears (most common wording if several)."""
+    """For each code, the wording from the latest year it appears (most common wording if several).
+
+    Sorting by code, then newest year first, then most rows first, puts the preferred wording on
+    the first row of each code; drop_duplicates keeps exactly that row.
+    """
     sort_cols = ["year", "n"] if "n" in table else ["year"]
     ordered = table.sort_values([key, *sort_cols], ascending=[True] + [False] * len(sort_cols))
     return ordered.drop_duplicates(key).set_index(key)[text].str.strip()
@@ -115,10 +147,11 @@ def add_hierarchy(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_flags(df: pd.DataFrame) -> pd.DataFrame:
+    """Mark rows that look wrong without removing them (see the report for how many there are)."""
     df = df.copy()
     df["flag_zero_weight"] = df["weight_kg"] <= 0
     df["flag_nonpositive_value"] = df["value_bd"] <= 0
-    with np.errstate(divide="ignore", invalid="ignore"):
+    with np.errstate(divide="ignore", invalid="ignore"):     # zero weights give inf/nan here; they are flagged above
         bd_per_kg = df["value_bd"] / df["weight_kg"]
     df["flag_implausible_unit_value"] = (df["weight_kg"] > 0) & (bd_per_kg > IMPLAUSIBLE_BD_PER_KG)
     return df
@@ -127,8 +160,11 @@ def add_flags(df: pd.DataFrame) -> pd.DataFrame:
 def clean_year(year: int, name: str) -> dict:
     """Load and merge one year. Repeats never span two years, so year-by-year gives the same result."""
     df = load_imports(RAW_DIR / f"{name}.csv", year)
+    # Grouping on categorical columns would create every combination of categories, so the
+    # key columns are turned back into plain Python strings for the merge.
     for col in ("hs8", "commodity_en", "iso2", "country_en", "unit"):
         df[col] = df[col].astype(object)  # not astype(str): that builds a huge fixed-width array for long text
+    # Everything needed later is collected now, so the raw rows can be freed after each year.
     out = {
         "rows": len(df),
         "totals": df.groupby(["year", "month"])[["value_bd", "weight_kg"]].sum(),
@@ -150,6 +186,7 @@ def concat_categorical(frames: list[pd.DataFrame], cols: list[str]) -> pd.DataFr
 
 
 def build_imports() -> tuple[pd.DataFrame, dict]:
+    """Clean every year, combine them, check the totals and add the classification and flags."""
     years = [clean_year(ds.year, ds.name) for ds in DATASETS if ds.kind == "imports"]
     clean = concat_categorical([y["merged"] for y in years], ["hs8", "iso2", "unit"])
     descriptions = pd.concat([y["descriptions"] for y in years])
@@ -163,6 +200,7 @@ def build_imports() -> tuple[pd.DataFrame, dict]:
     if clean.duplicated(KEYS).any():
         raise AssertionError("duplicate product-country-months remain")
 
+    # One description per product code and per country code (step 4 of the module docstring).
     clean["commodity_en"] = clean["hs8"].astype(object).map(latest_wording(descriptions, "hs8", "commodity_en"))
     clean["country_en"] = clean["iso2"].astype(object).map(latest_wording(countries, "iso2", "country_en"))
     clean = add_flags(add_hierarchy(clean))
@@ -176,6 +214,7 @@ def build_imports() -> tuple[pd.DataFrame, dict]:
         "flag_zero_weight", "flag_nonpositive_value", "flag_implausible_unit_value",
     ]
     clean = clean[columns].sort_values(["date", "hs8", "iso2"], ignore_index=True)
+    # Store repeated text as categories: the parquet file is several times smaller and loads faster.
     for col in ["hs8", "hs6", "hs4", "hs2", "section_name", "product_group", "commodity_en", "iso2", "country_en", "unit"]:
         clean[col] = clean[col].astype("category")
 
@@ -200,6 +239,7 @@ def build_route_monthly() -> pd.DataFrame:
         conflicts = df[df.duplicated(["date", "series"], keep=False)]
         if len(conflicts):
             raise ValueError(f"{name}: conflicting values for the same month:\n{conflicts}")
+        # Long (date, series, value) -> wide: one column per series, one row per month.
         parts.append(df.assign(series=df["series"].map(mapping)).pivot(index="date", columns="series", values="value"))
     out = pd.concat(parts, axis=1).sort_index()
     out.columns.name = None
@@ -214,6 +254,10 @@ def fix_general_cargo(route: pd.DataFrame) -> pd.DataFrame:
        thousands typed with a decimal point (56.186 means 56,186), so they are multiplied by 1,000.
     2. A month recorded as 0 while general cargo ships called at the port (March 2026: 17 ships) is
        treated as missing rather than as nothing unloaded.
+
+    Pro: the repaired months line up with the ship counts and with the months around them.
+    Con: it is a judgement about someone else's typing, so the original value is kept in the note
+    and no conclusion in the project rests on these figures alone.
     """
     col = "port_general_cargo_ft"
     route = route.copy()
@@ -232,7 +276,12 @@ def fix_general_cargo(route: pd.DataFrame) -> pd.DataFrame:
 # Report
 # ---------------------------------------------------------------------------
 def code_churn(df: pd.DataFrame, level: str) -> pd.DataFrame:
-    """Codes that vanish or appear between consecutive years, and the share of value they carry."""
+    """Codes that vanish or appear between consecutive years, and the share of value they carry.
+
+    Customs codes are revised (the HS 2022 revision came into force in 2022). If many codes
+    change between years, a model working at that level would see series stop and start for
+    reasons that have nothing to do with trade. This table shows which level is stable enough.
+    """
     codes = df[level].astype(object)
     rows = []
     years = sorted(df["year"].unique())
@@ -253,125 +302,189 @@ def code_churn(df: pd.DataFrame, level: str) -> pd.DataFrame:
 
 
 def series_density(df: pd.DataFrame, keys: list[str], months: int) -> dict:
+    """How many series at a given level have (nearly) every month, and how much value they cover.
+
+    A series that only has trade in a few months is hard to forecast, so this decides how finely
+    the data can be split for the models (2021-2025 only, so the war doesn't affect the choice).
+    """
     hist = df[df["year"] <= 2025]
     g = hist.groupby(keys, observed=True).agg(n=("date", "nunique"), v=("value_bd", "sum"))
     dense = g[g["n"] >= months - 6]
     return {"level": " x ".join(keys), "series": len(g), "dense": len(dense), "dense_%_value": 100 * dense["v"].sum() / g["v"].sum()}
 
 
-def md_table(df: pd.DataFrame, floatfmt: str = ".2f") -> str:
-    def fmt(x):
-        if isinstance(x, float):
-            return format(x, floatfmt)
-        if isinstance(x, (int, np.integer)):
-            return f"{x:,}"
-        return str(x)
-    header = "| " + " | ".join(df.columns) + " |"
-    sep = "|" + "|".join("---" for _ in df.columns) + "|"
-    body = ["| " + " | ".join(fmt(v) for v in row) + " |" for row in df.itertuples(index=False)]
-    return "\n".join([header, sep, *body])
-
-
 def write_report(clean: pd.DataFrame, stats: dict, route: pd.DataFrame, calendar: pd.DataFrame) -> str:
+    """The step 2 report: what was changed, why, and the checks that passed."""
     raw_rows = int(stats["raw_rows_by_year"].sum())
     by_year = pd.DataFrame({
-        "year": stats["raw_rows_by_year"].index.astype(str),
-        "raw rows": stats["raw_rows_by_year"].values,
-        "clean rows": clean.groupby("year").size().values,
-        "value (BD m)": (clean.groupby("year")["value_bd"].sum() / 1e6).values,
-        "weight (kt)": (clean.groupby("year")["weight_kg"].sum() / 1e6).values,
+        "Year": stats["raw_rows_by_year"].index.astype(str),
+        "Raw rows": stats["raw_rows_by_year"].values,
+        "Clean rows": clean.groupby("year").size().values,
+        "Value (BD m)": (clean.groupby("year")["value_bd"].sum() / 1e6).values,
+        "Weight (kt)": (clean.groupby("year")["weight_kg"].sum() / 1e6).values,
     })
     merged = clean[clean["n_shipments"] > 1]
 
     flags = []
-    for col, label in [("flag_zero_weight", "weight is zero"), ("flag_nonpositive_value", "value is zero or negative"),
-                       ("flag_implausible_unit_value", f"value per kg above {IMPLAUSIBLE_BD_PER_KG:,} BD")]:
+    for col, label in [("flag_zero_weight", "Weight is zero"), ("flag_nonpositive_value", "Value is zero or negative"),
+                       ("flag_implausible_unit_value", f"Value per kg above BD {IMPLAUSIBLE_BD_PER_KG:,}")]:
         rows = clean[clean[col]]
         share = round(100 * rows["value_bd"].sum() / clean["value_bd"].sum(), 3) + 0.0  # + 0.0 avoids printing "-0.000"
-        flags.append({"flag": label, "rows": len(rows), "% of value": share})
+        flags.append({"Flag": label, "Rows": len(rows), "% of value": share})
+    flag_value = sum(f["% of value"] for f in flags)
     missing_units = int(clean["unit"].isna().sum())
 
+    # Share of value and weight by product group, on the two most recent normal years.
     hist = clean[clean["year"].between(2024, 2025)]
     groups = hist.groupby("product_group", observed=True)[["value_bd", "weight_kg"]].sum()
     groups = (100 * groups / groups.sum()).sort_values("weight_kg", ascending=False).reset_index()
-    groups.columns = ["product group", "% of value", "% of weight"]
+    groups.columns = ["Product group", "% of value", "% of weight"]
+    bulk = groups[groups["Product group"] != DEFAULT_GROUP]
 
     churn = {lvl: code_churn(clean, lvl) for lvl in ["hs8", "hs6", "hs4"]}
+    for table in churn.values():
+        table.columns = ["Years", "Codes", "Gone", "Gone (% of value)", "New", "New (% of value)"]
     first_pair = churn["hs8"].iloc[0]
-    hs4_max = max(churn["hs4"]["gone_%_value"].max(), churn["hs4"]["new_%_value"].max())
+    hs4_max = max(churn["hs4"]["Gone (% of value)"].max(), churn["hs4"]["New (% of value)"].max())
     density = pd.DataFrame([series_density(clean, keys, 60) for keys in
                             (["hs2"], ["hs4"], ["hs2", "iso2"], ["hs4", "iso2"], ["hs8", "iso2"])])
-    density.columns = ["level", "series", "series with >= 54 of 60 months", "% of value they cover"]
+    density["level"] = density["level"].map({
+        "hs2": "Chapter (2-digit)", "hs4": "Heading (4-digit)", "hs2 x iso2": "Chapter x country",
+        "hs4 x iso2": "Heading x country", "hs8 x iso2": "8-digit product x country"})
+    density.columns = ["Level", "Series", "Series with 54+ of 60 months", "% of value they cover"]
+    hs2_country = density.iloc[2]
 
     last_import = clean["date"].max()
     route_cov = {c: f"{route.loc[route[c].notna(), 'date'].min():%b %Y} to {route.loc[route[c].notna(), 'date'].max():%b %Y}"
                  for c in ["port_import_teu", "port_total_vessels", "air_import_t", "port_roro_vehicles",
                            "port_general_cargo_ft"]}
     fixes = route[route["port_general_cargo_note"] != ""]
-    fix_rows = pd.DataFrame({"month": fixes["date"].dt.strftime("%b %Y"),
-                             "freight tonnes used": fixes["port_general_cargo_ft"].map(
+    fix_rows = pd.DataFrame({"Month": fixes["date"].dt.strftime("%b %Y"),
+                             "Freight tonnes used": fixes["port_general_cargo_ft"].map(
                                  lambda v: "missing" if pd.isna(v) else f"{v:,.0f}"),
-                             "what was done": fixes["port_general_cargo_note"]})
+                             "What was done": fixes["port_general_cargo_note"].str.capitalize()})
 
-    lines = [
-        "# Step 2: cleaning report",
-        "",
-        f"Generated by `src/build_dataset.py`. Raw rows: {raw_rows:,}. Clean rows: {len(clean):,}. "
-        f"Imports cover Jan 2021 to {last_import:%b %Y}.",
-        "",
-        "## Rows and totals by year",
-        "Totals are identical before and after cleaning (checked month by month in the script).",
-        "",
-        md_table(by_year, ",.0f"),
-        "",
-        "## Repeated shipments",
-        f"{len(merged)} product-country-months had more than one row ({int(merged['n_shipments'].sum())} rows in total). "
-        "They are separate shipments with different values, so they were added together.",
-        "",
-        "## Flagged rows (kept, not dropped)",
-        md_table(pd.DataFrame(flags), ".3f"),
-        "",
-        f"Rows with no unit recorded (`#N/A` in the source): {missing_units}.",
-        "",
-        "## What dominates import weight (2024-2025)",
-        "A few bulk raw materials make up most of the weight, so weight analyses separate them from general goods.",
-        "",
-        md_table(groups, ".1f"),
-        "",
-        "## Customs-code changes between years",
-        f"The HS 2022 revision shows up as {first_pair['new']} new 8-digit codes in 2022 carrying "
-        f"{first_pair['new_%_value']:.1f}% of that year's value, with many old codes only disappearing in 2023. "
-        f"At the 4-digit level no year's changes affect more than {hs4_max:.2f}% of value, so models work at "
-        "4-digit level or coarser and 8-digit codes are kept for drill-downs. (2025->2026 compares a full year "
-        "with seven crisis-hit months, so more codes are 'gone'.)",
-        "",
-        "**8-digit**", "", md_table(churn["hs8"]), "",
-        "**6-digit**", "", md_table(churn["hs6"]), "",
-        "**4-digit**", "", md_table(churn["hs4"]), "",
-        "## How complete the series are (2021-2025)",
-        "A series is a product (at the given level), optionally split by origin country.",
-        "",
-        md_table(density, ".1f"),
-        "",
-        "## Other tables built",
-        f"- `route_monthly.parquet`: port containers {route_cov['port_import_teu']}, ship visits "
-        f"{route_cov['port_total_vessels']}, air cargo {route_cov['air_import_t']}, vehicles unloaded from car "
-        f"carriers (RoRo) {route_cov['port_roro_vehicles']}, general cargo {route_cov['port_general_cargo_ft']}.",
-        f"- `calendar.csv`: {len(calendar)} months ({calendar['date'].min():%b %Y} to {calendar['date'].max():%b %Y}) "
-        "with Ramadan days, Eid flags and COVID flags.",
-        "- `hs_sections.csv`: chapter to section lookup.",
-        "",
-        "## Port general cargo: months repaired",
-        "In the general cargo file (freight tonnes per month at Khalifa Bin Salman Port), some 2026 months were "
-        "typed with a decimal point where a thousands separator belongs: 56.186 instead of 56,186. Every other "
-        f"month since 2019 is above 3,000, so values between 0 and {GENERAL_CARGO_TYPO_BELOW:,} are multiplied by "
-        "1,000. A month recorded as 0 while general cargo ships called at the port is treated as missing. "
-        "The column `port_general_cargo_note` in `route_monthly.parquet` marks each month changed.",
-        "",
-        md_table(fix_rows) if len(fix_rows) else "No months needed repairing.",
-        "",
-    ]
-    return "\n".join(lines)
+    return f"""
+# Step 2: Cleaning the data
+
+The six yearly import files ({raw_rows:,} rows, January 2021 to {last_import:%B %Y}) were combined into
+one table with {len(clean):,} rows: one row per month, 8-digit product and origin country. The aim was to
+change as little as possible. Nothing was dropped, the monthly totals still match the official figures
+exactly, and every change is recorded.
+
+## Key points
+
+- **Totals are unchanged.** Monthly value and weight were checked before and after cleaning; the script
+  stops if they differ.
+- **{len(merged)} product-country-months appeared more than once** with different values. They are
+  separate shipments, so they were added together rather than treated as duplicates.
+- **{sum(f["Rows"] for f in flags):,} odd rows are flagged, not removed.** They carry about
+  {flag_value:.1f}% of value.
+- **Bulk raw materials are about {bulk["% of weight"].sum():.0f}% of import weight but only
+  {bulk["% of value"].sum():.0f}% of value**, so they are analysed separately from everyday goods.
+- **The models work at chapter (2-digit) level or coarser.** Customs code revisions barely affect it, and
+  its series are complete enough to forecast.
+- **{len(fix_rows)} months of the port's general cargo figures were repaired** (a thousands separator typed
+  as a decimal point, and one zero that should be missing).
+
+## Rows and totals by year
+
+{md_table(by_year, ",.0f")}
+
+The 2026 figures cover January to {last_import:%B} only.
+
+## Repeated rows
+
+{len(merged)} product-country-months had more than one row ({int(merged['n_shipments'].sum())} rows in
+total). The rows have different values and weights, so they look like separate shipments rather than
+copies of the same record. Adding them together gives one row per product, country and month, which is
+what every later step expects. The number of rows combined is kept in the column `n_shipments`.
+
+## Rows that look wrong
+
+Rows with zero weight, zero or negative value, or an impossible price per kg are flagged with a column
+each and kept. Removing them would make the totals disagree with the published statistics, and each
+analysis can still leave them out if it needs to. The downside is that a wrong row stays in the data, but
+together they carry so little value that no result in the project changes.
+
+{md_table(pd.DataFrame(flags), ".3f")}
+
+A value above BD {IMPLAUSIBLE_BD_PER_KG:,} per kg is more than the price of gold, so it is almost
+certainly a typing error in the weight. {missing_units} rows have no unit recorded (`#N/A` in the source).
+
+## Bulk materials
+
+A few raw materials dominate Bahrain's import weight. They arrive in whole shiploads for a handful of
+plants (the aluminium smelter, steel and pelletising plants, construction), so one ship more or less moves
+the monthly figure a lot. Analysing them with everyday goods would let a single ore carrier hide what
+happened to food, machinery or clothing. They are kept as their own group in every later step.
+
+{md_table(groups, ".1f")}
+
+*Shares of 2024-2025 value and weight. Gold and jewellery are also separated later, in step 3, because
+they follow the gold price.*
+
+## Choosing the level of detail
+
+Customs codes are revised every few years. The HS 2022 revision shows up as {first_pair['New']} new
+8-digit codes in 2022 carrying {first_pair['New (% of value)']:.1f}% of that year's value, with many old
+codes only disappearing in 2023. A model working with 8-digit codes would see series stop and start for
+purely administrative reasons. At the 4-digit level, no year's changes affect more than {hs4_max:.2f}% of
+value.
+
+The other consideration is how complete each series is. A series (a product, optionally from one
+country) that only has trade in a few months cannot be forecast sensibly. Splitting by chapter and
+country gives {hs2_country['Series']:,} series, of which {hs2_country['Series with 54+ of 60 months']:,}
+have trade in nearly every month and cover {hs2_country['% of value they cover']:.0f}% of value. Splitting
+more finely quickly leaves most value in patchy series.
+
+The models in step 4 therefore work with chapters (2-digit codes) by origin region, and 8-digit codes are
+kept for looking up individual products. The cost is that the forecasts cannot see a shift between two
+products in the same chapter; the benefit is stable, complete series.
+
+{md_table(density, ".1f")}
+
+*2021-2025. A series is counted as complete with trade in at least 54 of the 60 months.*
+
+### Code changes between years, at each level
+
+**8-digit**
+
+{md_table(churn["hs8"])}
+
+**6-digit**
+
+{md_table(churn["hs6"])}
+
+**4-digit**
+
+{md_table(churn["hs4"])}
+
+2025->2026 compares a full year with seven war-affected months, so more codes are "gone".
+
+## Port general cargo: months repaired
+
+In the port's general cargo file (freight tonnes per month), several 2026 months were typed with a decimal
+point where a thousands separator belongs: 56.186 instead of 56,186. Every correctly typed month since
+2019 is above 3,000, so values between 0 and {GENERAL_CARGO_TYPO_BELOW:,} were multiplied by 1,000. A month
+recorded as 0 while general cargo ships called at the port is treated as missing, since ships did unload.
+Each change is marked in the column `port_general_cargo_note`. Because these are repairs to someone else's
+figures, no conclusion in later steps rests on general cargo alone.
+
+{md_table(fix_rows) if len(fix_rows) else "No months needed repairing."}
+
+## Tables produced
+
+- `data/processed/imports_clean.parquet`: the cleaned imports, with product hierarchy, product group and flags.
+- `data/processed/route_monthly.parquet`: port containers ({route_cov['port_import_teu']}), ship visits
+  ({route_cov['port_total_vessels']}), air cargo ({route_cov['air_import_t']}), vehicles unloaded from car
+  carriers ({route_cov['port_roro_vehicles']}) and general cargo ({route_cov['port_general_cargo_ft']}).
+- `data/reference/calendar.csv`: {len(calendar)} months ({calendar['date'].min():%b %Y} to
+  {calendar['date'].max():%b %Y}) with Ramadan days, Eid flags and COVID flags.
+- `data/reference/hs_sections.csv`: chapter to section lookup.
+
+{footer("src/build_dataset.py")}
+"""
 
 
 def main() -> int:
@@ -395,7 +508,7 @@ def main() -> int:
     hs_sections_table().to_csv(REFERENCE_DIR / "hs_sections.csv", index=False)
     print("  wrote calendar.csv and hs_sections.csv")
 
-    REPORT_PATH.write_text(write_report(clean, stats, route, calendar), encoding="utf-8")
+    write_markdown(REPORT_PATH, write_report(clean, stats, route, calendar))
     print(f"  wrote {REPORT_PATH.relative_to(ROOT)}")
     print(f"\nDone in {time.time() - start:.0f}s. All totals preserved.")
     return 0

@@ -1,6 +1,11 @@
 """Tests for the step 2 cleaning functions and reference tables.
 
-Run with:  pytest
+    pytest tests/test_build.py
+
+The cleaning must never change the official totals, so the key test is that merging repeated
+rows keeps value and weight exactly. The others check the product hierarchy, the flags, the
+choice of description, the Ramadan and Eid dates against known calendars, and the general cargo
+repair. They use a few rows modelled on the real files, so they run without the data.
 """
 
 from __future__ import annotations

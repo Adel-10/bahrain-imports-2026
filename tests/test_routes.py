@@ -1,6 +1,11 @@
 """Tests for the step 6 helpers: route groups, comparisons with 2025, elimination and adapting.
 
-Run with:  pytest
+    pytest tests/test_routes.py
+
+The elimination test is worked through by hand: given last year's weight and containers, this
+year's containers and air cargo, the minimum for other routes must come out exactly. The adapting
+test checks the "came back x% of the way" formula, including totals that fell further or ended
+above normal.
 """
 
 from __future__ import annotations

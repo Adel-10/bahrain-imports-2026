@@ -1,21 +1,25 @@
 # Shock and Recovery: Bahrain's import supply chains in 2026
 
-In 2026, war in the Gulf closed the Strait of Hormuz and, for more than a month, Bahrain's airspace. This project uses
-Bahrain's official monthly import data (1.76 million rows, January 2021 to July 2026) to measure **how far imports fell
-below what they would have been without the war, which supply chains were hit hardest, which routes broke, and how far
-supply chains had come back**.
+In 2026, war in the Gulf closed the Strait of Hormuz and, for more than a month, Bahrain's airspace. Almost everything
+that reaches Bahrain by sea from outside the Gulf passes through that strait. This project uses Bahrain's official
+monthly import statistics (1.76 million rows, January 2021 to July 2026), together with port and airport figures, to
+measure how far imports fell below what they would have been without the war, which supply chains and routes broke,
+and how far they had come back.
 
-The method: forecast 2026 as if nothing had happened, using a model tested on two normal years first, and compare the
-forecast with what actually arrived. A gap only counts if it is bigger than the model's normal misses.
+The core of the method is a counterfactual forecast. A model learns how imports normally behave, is tested on two
+normal years to find out how wrong it usually is, and then forecasts 2026 as if nothing had happened. A shortfall only
+counts if it is bigger than the model's normal misses.
 
-**[Read the one-page summary](reports/summary.md)**, or the [detailed reports](#results-step-by-step) for each step.
+**[Read the one-page summary](reports/summary.md)**, the [methodology note](docs/methodology.md), or the
+[step-by-step reports](#reports).
 
-## Headline findings
+## Key findings
 
 - **Everyday imports fell 54% below normal in March 2026**, 36% in April-May and 18% in June-July. About **BD 624
-  million (32%)** of goods didn't arrive from March to July (likely between BD 539 and 710 million).
-- **Vehicles were hit hardest (-62%).** Machinery and vehicles together were 64% of the money lost. Goods from the
-  Americas and East and South-East Asia fell 48%; **goods from GCC countries held up** (+8%, within normal).
+  million (32%)** of goods didn't arrive from March to July, likely between BD 539 and 710 million.
+- **Vehicles were hit hardest (-62%)**, and machinery and vehicles together were 64% of the money lost. Goods from the
+  Americas and East and South-East Asia fell 48%, while **goods from GCC countries held up** (+8%, within the normal
+  range).
 - **Container ships and car carriers were the routes that broke.** Containers unloaded ran at about a third of normal
   from March to July, and car carriers unloaded no vehicles at all from April to September.
 - **Goods got in another way.** Containers and planes could have carried at most 46% of what arrived by weight, so **at
@@ -23,7 +27,7 @@ forecast with what actually arrived. A gap only counts if it is bigger than the 
   Hormuz, light goods from far away fell 13% (leaving out aircraft engines) and heavy goods 54%.
 - **Supply chains came back about two-thirds of the way by June-July.** Vehicles, clothing, East Asia and the Americas
   lagged. Port figures suggest they kept adapting after Hormuz closed again on 11 July.
-- **Relying on few supplier countries didn't matter; relying on far-away ones did.** Products bought from one or two
+- **Relying on few supplier countries didn't matter; relying on distant ones did.** Products bought from one or two
   countries fell about as far as products with many suppliers, while each extra 10% of a product from beyond the
   Middle East meant about 5 points further below normal. The lesson: diversify routes, not just countries.
 
@@ -31,41 +35,45 @@ forecast with what actually arrived. A gap only counts if it is bigger than the 
 
 ## How it works
 
-1. **Clean the data.** Six yearly import files in three different formats become one table of 1.76 million rows
-   (month x 8-digit product x origin country). Monthly totals are checked against the portal's own figures, and data
-   errors are fixed and flagged rather than dropped.
-2. **Forecast imports without the war.** Core goods are split into about 660 series (one HS2 chapter from one origin
-   region). Four forecasts are compared: two simple rules, a **ridge regression written from scratch in NumPy** (solved
-   exactly with the normal equations and by gradient descent with a step size from the Hessian's largest eigenvalue;
-   the two agree to about 1e-15), and **gradient-boosted trees** (scikit-learn).
-3. **Test on normal years first.** Each forecast is run on 2024 and 2025 *as if it were January*, so it never sees the
-   months it forecasts. Choices were made on 2024 and checked once on 2025. The linear model won (national miss 5.5% a
-   month in 2025, against 6.2% for last year's average month). Its misses set a "9 times out of 10" range for every
-   total and period length; set on 2024, the ranges held 88-92% of the time in 2025.
-4. **Measure the 2026 shortfall.** Actual 2026 imports are compared with the forecast, nationally, by origin region and
-   by product section. The trees give a second opinion (national gap -33% against -32%).
-5. **Follow the routes.** Port and airport figures show which routes broke. The causeway publishes no figures, so its
-   share is bounded by **elimination**: the most containers and planes could have carried, taken away from what arrived.
+1. **Clean the data.** Six yearly import files in three slightly different formats become one table of 1.76 million
+   rows (month × 8-digit product × origin country). Monthly totals are checked against the portal's own figures, and
+   suspect rows are flagged rather than dropped, so the totals still match the official statistics.
+2. **Decide what to forecast.** Exploring the data showed that bulk raw materials and gold behave very differently from
+   everyday goods, that imports are only weakly seasonal but growing, and that the war stands out clearly at the level
+   of customs chapter by origin region but drowns in noise at finer levels. Everyday ("core") goods are therefore split
+   into about 660 series, one chapter from one origin region.
+3. **Build and test the forecasts.** Four forecasts are compared: two simple rules, a **ridge regression written from
+   scratch in NumPy** (solved with the normal equations and, as a check, by gradient descent; the two agree to
+   floating-point precision) and **gradient-boosted trees** (scikit-learn). Each is tested on 2024 and 2025 as if it
+   were January, so it never sees the months it forecasts. Choices were made on 2024 and checked once on 2025. The
+   ridge regression won (national miss 5.5% a month in 2025, against 6.2% for last year's average month). Its misses
+   set a "9 times out of 10" range for every total and period length; set on 2024, the ranges held 88-92% of the time
+   in 2025.
+4. **Measure the 2026 shortfall.** Actual imports are compared with the forecast nationally, by origin region and by
+   product section. The trees give a second opinion (national gap -33% against -32%).
+5. **Follow the routes.** Port and airport figures show which routes broke. Goods are grouped by the routes they can
+   use (by origin, and by value per kg for goods from far away). The causeway publishes no figures, so its share is
+   bounded by **elimination**: the most containers and planes could have carried, taken away from what arrived.
+6. **Test a common piece of advice.** Products are profiled by their effective number of supplier countries and their
+   share from beyond the Middle East, and a weighted regression with bootstrap ranges separates the two.
 
-Every report is generated by the scripts, so re-running the pipeline refreshes every number and chart.
+The [methodology note](docs/methodology.md) explains each choice, the alternatives and the trade-offs. Every report
+and chart is generated by the scripts, so re-running the pipeline refreshes all of them.
 
-## Results step by step
+## Reports
 
 | Step | Question | Report | Script |
 |---|---|---|---|
 | 1 | Is the download complete? | (checks printed by the script) | `src/download_data.py`, `src/check_downloads.py` |
-| 2 | How was the data cleaned? | [Cleaning report](reports/step2_cleaning_report.md) | `src/build_dataset.py` |
-| 3 | What does the data show? | [Exploration](reports/step3_exploration.md) | `src/explore.py` |
-| 4 | Which forecast is most accurate in normal years? | [Forecasting models](reports/step4_models.md) | `src/backtest.py` |
+| 2 | How was the data cleaned? | [Cleaning the data](reports/step2_cleaning_report.md) | `src/build_dataset.py` |
+| 3 | What does the data show, and what should the models forecast? | [Exploring the data](reports/step3_exploration.md) | `src/explore.py` |
+| 4 | Which forecast is most accurate in normal years? | [Forecasting imports without the war](reports/step4_models.md) | `src/backtest.py` |
 | 5 | How far below normal were imports? | [The 2026 shortfall](reports/step5_shortfall.md) | `src/shortfall.py` |
 | 6 | Which routes broke, and how far had supply chains come back? | [Routes and adapting](reports/step6_routes.md) | `src/routes.py` |
-| Extra | Were products that relied on few supplier countries hit harder? | [Supplier concentration](reports/extra_suppliers.md) | `src/suppliers.py` |
+| Extra | Did relying on few supplier countries matter? | [Supplier concentration](reports/extra_suppliers.md) | `src/suppliers.py` |
 | 7 | The whole project in one read | [Summary](reports/summary.md) | `src/summary.py` |
 
-Each report starts with a short-answer table and a list of the words it uses, then explains what was done, what was
-found and why it matters.
-
-## Reproduce it
+## Reproducing the results
 
 You need Python 3.10 or newer (developed on 3.14) and about 1 GB of disk space.
 
@@ -80,12 +88,11 @@ python src/run_all.py                  # every step in order, about 4 minutes af
 pytest                                 # tests (they don't need the data)
 ```
 
-`run_all.py` downloads the data (about 0.4 GB) and runs every step, including the extra. You can also run the steps one
-at a time:
+`run_all.py` downloads the data (about 0.4 GB) and runs every step. You can also run the steps one at a time:
 
 ```bash
 python src/download_data.py        # step 1: download (skips files you already have)
-python src/check_downloads.py      # step 1: checks every month against figures measured on the portal
+python src/check_downloads.py      # step 1: check every month against figures read from the portal
 python src/build_dataset.py        # step 2: clean and build the tables (about 20 s)
 python src/explore.py              # step 3: exploration (about 10 s)
 python src/backtest.py             # step 4: train and test the models (about 2 minutes)
@@ -95,13 +102,13 @@ python src/suppliers.py            # extra: supplier concentration (about 20 s)
 python src/summary.py              # step 7: the summary (a few seconds)
 ```
 
-**About the data snapshot.** The reports use data downloaded on 11 and 13-14 October 2026; `data/raw/MANIFEST.json`
-records each file's download time and checksum. The portal adds months as they are published. The scripts pick up new
-months automatically, so a later download will extend the results rather than reproduce these exact numbers.
+**Data snapshot.** The reports use data downloaded on 11 and 13-14 October 2026; `data/raw/MANIFEST.json` records each
+file's download time and checksum. The portal adds months as they are published and the scripts pick them up
+automatically, so a later download will extend the results rather than reproduce these exact numbers.
 `check_downloads.py` says when a new month has appeared.
 
-**About exact numbers.** `requirements-lock.txt` pins the package versions used. With other versions of scikit-learn
-the gradient-boosted trees (the second opinion) can differ slightly; the linear model's results don't depend on it.
+**Exact numbers.** `requirements-lock.txt` pins the package versions used. With other versions of scikit-learn the
+gradient-boosted trees (the second opinion) can differ slightly; the main model's results don't depend on it.
 
 ## Data
 
@@ -116,21 +123,8 @@ All data comes from the [Bahrain Open Data Portal](https://www.data.gov.bh) (Inf
 | `port_general_cargo.csv` | General cargo (freight tonnes) at Khalifa Bin Salman Port | 2019 onwards |
 | `airport_cargo.csv` | Air cargo (tonnes) at Bahrain International Airport | 2023 onwards |
 
-`data/reference/events.csv` lists the dates of the events used to label periods (COVID restrictions, the start of the
-war, the Strait of Hormuz closures and reopening, the airspace closure and reopening, causeway closures), each with a
-source link.
-
-Cleaning decisions, all based on profiling the real files (details in the [cleaning report](reports/step2_cleaning_report.md)):
-
-- Separate shipments of the same product from the same country in the same month are added together. Monthly totals
-  are checked to be identical before and after.
-- Odd rows (zero weight, zero or negative value, value per kg above BD 100,000) are flagged, not dropped, so totals
-  still match the official figures.
-- **Bulk materials** (iron ore, alumina, coke, construction minerals: about 85% of import weight, under 22% of value)
-  and **precious metals** are analysed separately from **core goods**, the everyday supply chains.
-- **Port general cargo figures repaired.** Several 2026 months were typed with a decimal point for a thousands
-  separator (56.186 for 56,186); they are multiplied by 1,000 and marked. March 2026, recorded as 0 although 17 general
-  cargo ships called, is treated as missing.
+`data/reference/events.csv` lists the dates used to label periods (COVID restrictions, the start of the war, the
+Strait of Hormuz closures and reopening, the airspace closure and reopening, causeway closures), each with a source.
 
 ## Limitations
 
@@ -151,25 +145,27 @@ Cleaning decisions, all based on profiling the real files (details in the [clean
 
 ```
 data/raw/            downloaded files, untouched (not committed; MANIFEST.json is)
-data/interim/        saved forecasts and results passed between steps (not committed)
+data/interim/        forecasts and results passed between steps (not committed)
 data/processed/      cleaned tables (not committed)
 data/reference/      small hand-made tables: events, calendar, HS sections
+docs/methodology.md  the methods, the alternatives considered and their trade-offs
 src/config.py        dataset ids, paths, reference figures for the download checks
 src/loaders.py       reads every file format into the same columns
 src/reference.py     HS sections, product groups, origin regions, periods, calendar features
+src/charts.py        shared chart style and drawing helpers
+src/reporting.py     number formatting and markdown helpers for the reports
 src/download_data.py, src/check_downloads.py   step 1
 src/build_dataset.py                           step 2
-src/explore.py                                 step 3 (also the shared chart style)
-src/features.py      series and clues for the models
-src/models.py        simple rules, linear model from scratch, boosted trees
+src/explore.py                                 step 3
+src/features.py      series and features for the models
+src/models.py        simple rules, ridge regression from scratch, boosted trees
 src/backtest.py, src/step4_report.py           step 4
 src/shortfall.py, src/step5_report.py          step 5
 src/routes.py, src/step6_report.py             step 6
 src/suppliers.py, src/suppliers_report.py      extra: supplier concentration
 src/summary.py                                 step 7
-src/glossary.py      plain-language definitions shared by the reports
 src/run_all.py       runs every step in order
-tests/               pytest tests
+tests/               pytest tests (run on every push by GitHub Actions)
 reports/             reports (markdown) and figures/
 ```
 

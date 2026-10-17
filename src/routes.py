@@ -2,21 +2,38 @@
 
     python src/routes.py          (run src/backtest.py first: it saves the forecasts used here)
 
-The idea in plain words
------------------------
+The problem
+-----------
 Goods reach Bahrain in five ways: container ships, car carriers and general cargo ships (all at
 Khalifa Bin Salman Port), planes (Bahrain International Airport), and trucks over the King Fahd
-Causeway from Saudi Arabia. The port and the airport publish monthly figures; the causeway doesn't.
+Causeway from Saudi Arabia. The customs data says what arrived and where it came from, but not how
+it travelled. The port and the airport publish monthly figures; the causeway doesn't. So the route
+story has to be pieced together from several partial sources.
 
-1. **Routes.** The port and airport figures for 2026 are compared with the same months of 2025.
-2. **Exposure.** Step 5's comparison (actual imports against the forecast without the war, with
-   the same normal ranges) is repeated for groups that depend on different routes: goods from GCC
-   countries (which can come by road), from the rest of the Middle East, and from beyond; and, for
-   goods from beyond the Middle East, light goods (worth flying) against heavy ones.
-3. **Elimination.** Containers and planes can't have carried more than a certain share of what
-   arrived; the rest must have come by road or general cargo ship.
-4. **Adapting.** How far each supply chain had come back by the latest period, and what the port
-   and airport figures (published two months ahead of the import data) say about August and later.
+Four pieces of evidence
+-----------------------
+1. **Routes** (``indicator_table``). The port and airport figures for 2026 are compared with the
+   same months of 2025. A simple year-on-year comparison is used here because these series are
+   national totals with no model behind them.
+2. **Exposure** (``route_totals``). Step 5's comparison (actual imports against the forecast
+   without the war, with tested normal ranges) is repeated for groups that depend on different
+   routes: goods from GCC countries (which can come by road), from the rest of the Middle East,
+   and from beyond. Goods from beyond the Middle East are also split by value per kg: light goods
+   (worth flying, at least BD 5 a kg) against heavy ones (under BD 1 a kg), with vehicles apart
+   because they travel on their own kind of ship. If light goods held up while heavy goods fell,
+   air was working when sea was not.
+3. **Elimination** (``elimination``). Containers and planes can't have carried more than a certain
+   weight of what arrived, even on the most generous assumptions; the rest must have come by road
+   or general cargo ship. This gives a lower bound on the "other routes" share without needing any
+   causeway data.
+4. **Adapting** (``adapting``). How far each supply chain had come back by the latest period, and
+   what the port and airport figures (published two months ahead of the import data) say about
+   August and later.
+
+Pros: each piece uses data that exists, and the elimination bound is deliberately conservative,
+so its conclusion holds even if the assumptions are generous. Cons: the road's own share can only
+be bounded, not measured; origin is a proxy for route; and value per kg is a rough guide to
+whether something can be flown.
 
 Writes reports/step6_routes.md, four charts, and data/interim/step6_*.csv (read by summary.py).
 """
@@ -29,30 +46,32 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from backtest import aggregate_errors
 from config import ROOT
 from reference import CORE, PRE_WAR_2026, add_analysis_group, add_region, war_periods_2026
 from shortfall import build_periods, period_gaps, window_ranges
 
-warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)   # ratios with zero denominators become NaN, as intended
 
 INTERIM_DIR = ROOT / "data" / "interim"
 PROCESSED_DIR = ROOT / "data" / "processed"
 REPORT_PATH = ROOT / "reports" / "step6_routes.md"
 
-# Origin groups by how goods can reach Bahrain.
+# Origin groups by how goods can reach Bahrain: GCC by road or short sea trips inside the Gulf; the rest
+# of the Middle East by long overland routes; everything else normally by sea through Hormuz, or by air.
 GCC, OTHER_ME, BEYOND = "GCC", "Other Middle East", "Beyond the Middle East"
 ORIGIN_ROUTES = [GCC, OTHER_ME, BEYOND]
 
-# Weight classes, by value per kilogram of each series in 2024-2025.
+# Weight classes, by value per kilogram of each series in 2024-2025. Air freight costs a few dollars per
+# kg, so it only makes sense for goods worth much more than that per kg (phones, medicines, parts).
 LIGHT_FROM = 5.0          # BD per kg (about $13): worth flying
-HEAVY_BELOW = 1.0         # BD per kg
+HEAVY_BELOW = 1.0         # BD per kg: almost never flown (building materials, bulk food, steel)
 LIGHT, MIDDLE, HEAVY = "Light", "Middle", "Heavy"
 VEHICLES = "Vehicles and transport"   # HS section 17: own kind of ship (car carriers), kept apart
 VEHICLES_SECTION = 17
 WEIGHT_CLASSES = [LIGHT, MIDDLE, HEAVY, VEHICLES]
 AIRCRAFT_ENGINES = {"8409", "8411"}   # aircraft engines and their parts: large, irregular purchases (see step 5)
 
+# Names of the two new "levels" of totals, used like step 5's "Origin region" and "Section".
 ORIGIN_LEVEL = "Origin route"
 WEIGHT_LEVEL = "Beyond the Middle East, by weight"
 
@@ -83,10 +102,12 @@ def load_core_weight() -> pd.DataFrame:
 
 
 def origin_route(region: str) -> str:
+    """Origin region -> origin route group (GCC, Other Middle East, or Beyond the Middle East)."""
     return region if region in (GCC, OTHER_ME) else BEYOND
 
 
 def weight_class(section_id: int, bd_per_kg: float) -> str:
+    """Light / Middle / Heavy by value per kg, with vehicles (section 17) as their own class."""
     if section_id == VEHICLES_SECTION:
         return VEHICLES
     if np.isnan(bd_per_kg):          # a handful of tiny pooled series with no weight recorded
@@ -95,14 +116,20 @@ def weight_class(section_id: int, bd_per_kg: float) -> str:
 
 
 def series_key(core: pd.DataFrame, frame: pd.DataFrame) -> pd.Series:
-    """For each import row, the model series it belongs to: (section, region, chapter or "other")."""
+    """For each import row, the model series it belongs to: (section, region, chapter or "other").
+
+    Needed because the forecasts are per series, while value per kg is computed from import rows.
+    """
     standalone = set(zip(frame["section_id"], frame["region"], frame["hs2"].astype(str)))
     keys = zip(core["section_id"], core["region"], core["hs2"])
     return pd.Series([(s, r, h if (s, r, h) in standalone else "other") for s, r, h in keys], index=core.index)
 
 
 def value_density(core: pd.DataFrame, frame: pd.DataFrame) -> pd.Series:
-    """BD per kg of each model series in 2024-2025, from rows with a recorded weight."""
+    """BD per kg of each model series in 2024-2025, from rows with a recorded weight.
+
+    Measured on the two years before the war so the classification can't be influenced by 2026.
+    """
     hist = core[core["date"].dt.year.isin([2024, 2025]) & (core["weight_kg"] > 0)]
     keyed = hist.assign(key=series_key(hist, frame))
     sums = keyed.groupby("key")[["value_bd", "weight_kg"]].sum()
@@ -123,7 +150,11 @@ def tag_series(frame: pd.DataFrame, density: pd.Series) -> pd.DataFrame:
 # 2. Exposure: gaps for route groups
 # ---------------------------------------------------------------------------
 def route_totals(frame: pd.DataFrame) -> pd.DataFrame:
-    """Monthly totals for the route groups, in the shape step 5's functions expect."""
+    """Monthly totals for the route groups, in the shape step 5's functions expect.
+
+    Passing this to ``window_ranges`` and ``period_gaps`` reuses step 5's machinery unchanged:
+    the same tested ranges and the same definition of a real shortfall, just for new groupings.
+    """
     parts = []
     t = frame.groupby(["origin_route", "target_month"])[["actual", "forecast"]].sum().reset_index()
     parts.append(t.rename(columns={"origin_route": "name"}).assign(level=ORIGIN_LEVEL))
@@ -171,12 +202,17 @@ def engines_check(core: pd.DataFrame, frame: pd.DataFrame, density: pd.Series, g
 # 1. Routes: port and airport against the same months of 2025
 # ---------------------------------------------------------------------------
 def months_in(series: pd.Series, year: int, months: list[int]) -> pd.Series:
+    """The values of a monthly series in the given months of one year (missing months dropped)."""
     s = series.dropna()
     return s[(s.index.year == year) & s.index.month.isin(months)]
 
 
 def compare_with_2025(series: pd.Series, months: list[int]) -> dict:
-    """2026 total for the months that have data, against the same months of 2025."""
+    """2026 total for the months that have data, against the same months of 2025.
+
+    Only months present in 2026 are compared, so a period that is only partly published is still
+    compared like with like.
+    """
     now = months_in(series, 2026, months)
     if now.empty:
         return {"months": [], "now": np.nan, "before": np.nan, "pct_of_normal": np.nan}
@@ -217,6 +253,10 @@ def elimination(core: pd.DataFrame, route: pd.DataFrame, periods: dict) -> pd.Da
       * planes: all air cargo and mail unloaded, as if every tonne were core goods;
       * whatever is left must have come another way: by truck over the causeway or by general
         cargo ship (or through a port the data doesn't cover).
+
+    Every assumption pushes the container and air estimates up, so the "other routes" figure is
+    a minimum: the true share by road and general cargo can only be larger. It is a bound, not a
+    measurement, because container loads and the mix of air cargo are not published.
     """
     r = route.set_index("date")
     weight = core.groupby("date")["weight_kg"].sum() / 1e3                  # tonnes
@@ -227,7 +267,7 @@ def elimination(core: pd.DataFrame, route: pd.DataFrame, periods: dict) -> pd.Da
         c0, c1 = months_in(r["port_import_teu"], 2025, months).sum(), months_in(r["port_import_teu"], 2026, months).sum()
         air1 = months_in(r["air_import_t"], 2026, months).sum()
         gc = months_in(r["port_general_cargo_ft"], 2026, months)
-        containers_max = w0 * c1 / c0
+        containers_max = w0 * c1 / c0                         # 2025 weight, scaled by the change in containers
         other_min = w1 - containers_max - air1
         rows.append({
             "period": label, "months": len(months),
@@ -264,6 +304,10 @@ def adapting(gaps: pd.DataFrame, war_periods: list[str]) -> pd.DataFrame:
     """For every total: % of normal in each war period, the worst one, the latest one, and how far back it came.
 
     "Came back x% of the way" = (latest - worst) / (100 - worst), in % of normal.
+
+    For example, a total that fell to 40% of normal and was back at 85% came back
+    (85 - 40) / (100 - 40) = 75% of the way. It measures recovery relative to the size of the fall,
+    so a small dip that fully recovered and a deep fall that fully recovered both score 100%.
     """
     g = gaps[gaps["period"].isin(war_periods)].copy()
     g["pct_of_normal"] = g["actual"] / g["forecast"] * 100
@@ -287,6 +331,7 @@ def adapting(gaps: pd.DataFrame, war_periods: list[str]) -> pd.DataFrame:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    """Compute the four pieces of evidence, save them, and write the step 6 report."""
     t0 = time.time()
     forecast = pd.read_parquet(INTERIM_DIR / "step4_forecast_2026.parquet")
     backtest = pd.read_parquet(INTERIM_DIR / "step4_backtest.parquet")
@@ -311,6 +356,7 @@ def main() -> int:
     density = value_density(core, forecast)
     frame = tag_series(forecast, density)
     tests = tag_series(backtest, density)
+    # Ranges for the new groups come from the same 2024-2025 test forecasts as step 5's.
     ranges = window_ranges(tests, lengths, route_totals)
     gaps = period_gaps(frame, ranges, all_periods, route_totals)
     gaps["month_list"] = gaps["period"].map(all_periods)
@@ -322,6 +368,7 @@ def main() -> int:
     cars = cars_without_car_carriers(core, route)
 
     print("4/4 Adapting, and the report ...", flush=True)
+    # Adapting covers step 5's totals (national, regions, sections) as well as the new route groups.
     step5_ranges = window_ranges(backtest, lengths)
     step5_gaps = period_gaps(forecast, step5_ranges, all_periods)
     adapt = adapting(pd.concat([step5_gaps, gaps.drop(columns="month_list")], ignore_index=True), war_periods)

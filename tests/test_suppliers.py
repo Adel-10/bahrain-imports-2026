@@ -1,6 +1,10 @@
 """Tests for the supplier-concentration extra.
 
-Run with:  pytest
+    pytest tests/test_suppliers.py
+
+Checks the effective number of suppliers against hand-worked examples, the supplier profile of a
+small product table, that the weighted regression recovers a known line, and that switching to
+minor and brand-new suppliers is counted correctly.
 """
 
 from __future__ import annotations

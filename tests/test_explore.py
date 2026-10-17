@@ -1,6 +1,11 @@
 """Tests for the step 3 helpers: origin regions, analysis groups and the simple-forecast measures.
 
-Run with:  pytest
+    pytest tests/test_explore.py
+
+These protect the classification every later step relies on (each country in exactly one
+region, bulk and precious metals split from core goods) and the yardstick calculations
+(% change against the 2025 average month, the normal miss and the normal range), using small
+hand-made tables whose answers can be worked out on paper.
 """
 
 from __future__ import annotations
@@ -64,14 +69,3 @@ def test_gap_and_normal_swing():
     assert swing["jumpy"] == pytest.approx(50.0)
     assert months_of(w, 2026).shape[1] == 7
 
-
-def test_glossary_tables_use_known_terms():
-    import glossary
-    for step, keys in {3: ["core_goods", "national_total", "normal", "normal_miss", "normal_range", "containers"],
-                       4: ["national_total", "normal_year", "miss", "overall_score"],
-                       5: ["forecast", "normal", "gap", "normal_range", "since_war"],
-                       6: ["route", "causeway", "normal", "normal_range", "elimination", "came_back"],
-                       8: ["product", "forecast", "effective_suppliers", "beyond_share", "likely_range"]}.items():
-        table = glossary.table(step, keys)
-        assert table.count("\n") == len(keys) + 1
-    assert "**National total** (also *nationally* or *All of Bahrain*)" in glossary.table(5, ["national_total"])

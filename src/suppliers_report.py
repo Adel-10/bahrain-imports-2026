@@ -1,24 +1,37 @@
-"""Charts and the written report for the supplier-concentration extra (called by suppliers.py)."""
+"""Charts and the written report for the supplier-concentration extra (called by suppliers.py).
+
+    python src/suppliers.py        # runs the analysis, then calls write() in this module
+
+Charts (reports/figures/)
+-------------------------
+1. extra_suppliers_1_groups.png     % of normal for products grouped by number of suppliers (left)
+                                    and by share from beyond the Middle East (right).
+2. extra_suppliers_2_effects.png    the regression's two main effects under three weightings, each
+                                    with its 90% bootstrap range.
+3. extra_suppliers_3_switching.png  share of far-dependent products' imports from minor suppliers,
+                                    2024-2026, split by where those suppliers are.
+
+Report (reports/extra_suppliers.md)
+-----------------------------------
+Key findings, the method (products, effective suppliers, distance, the regression), the group
+comparisons, the regression, switching, and the limitations.
+"""
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import FuncFormatter
 
-import glossary
-from build_dataset import md_table
-from explore import (AQUA, BASELINE, BLUE, GRID, INK, INK2, MUTED, ORANGE, SHADE, SURFACE, YELLOW, add_axes,
-                     dot_handle, legend, new_figure, rounded_bar, save, source_note, tidy)
-from step5_report import RED, and_list, pct
-from step6_report import pon, short_period
-from suppliers import (BEYOND_GROUPS, BEYOND_LEVEL, FAR_FROM, MINOR_SHARE, REPORT_PATH, SUPPLIER_GROUPS,
-                       SUPPLIER_LEVEL)
+from charts import (AQUA, BASELINE, BLUE, GRID, INK, INK2, ORANGE, RED, SURFACE, YELLOW, add_axes, dot_handle, legend,
+                    new_figure, rounded_bar, save, source_note, tidy)
+from reporting import footer, md_table, pon, short_period, write_markdown
+from suppliers import BEYOND_GROUPS, BEYOND_LEVEL, MINOR_SHARE, REPORT_PATH, SUPPLIER_GROUPS, SUPPLIER_LEVEL
 
 
 def status_colour(outside: bool, gap: float) -> str:
+    """Dot colour: aqua inside the normal range, red below it, blue above it."""
     if not outside:
         return AQUA
     return RED if gap < 0 else BLUE
@@ -28,6 +41,7 @@ def status_colour(outside: bool, gap: float) -> str:
 # Chart 1: the two groupings side by side
 # ---------------------------------------------------------------------------
 def fig_groups(gaps: pd.DataFrame, since_label: str) -> None:
+    """Figure 1: two panels of lollipops from 100% (normal) to each group's % of normal, over its normal range."""
     g = gaps[gaps["period"] == since_label].set_index(["level", "name"])
     fig = new_figure(10, 5.4, "What mattered was where suppliers were, not how many there were",
                      f"Imports from {short_period(since_label)} 2026 as % of normal (the forecast without the war), "
@@ -71,6 +85,7 @@ def fig_groups(gaps: pd.DataFrame, since_label: str) -> None:
 # Chart 2: the regression, both effects under three weightings
 # ---------------------------------------------------------------------------
 def fig_effects(effects: pd.DataFrame) -> None:
+    """Figure 2: estimate and 90% range of the two main effects, one row per weighting."""
     shown = [("suppliers", "Each doubling of the number of supplier countries", BLUE),
              ("beyond", "Each extra 10% of the product from beyond the Middle East", ORANGE)]
     weightings = list(dict.fromkeys(effects["weighting_label"]))
@@ -119,6 +134,7 @@ def fig_effects(effects: pd.DataFrame) -> None:
 # Chart 3: switching to minor suppliers
 # ---------------------------------------------------------------------------
 def fig_switching(switch: pd.DataFrame, months_label: str) -> None:
+    """Figure 3: stacked bars, one per year, of the minor-supplier share split by supplier location."""
     far = switch[switch["scope"] == "Far-dependent products"].set_index("year")
     parts = [("minor_from_Beyond the Middle East", "Other countries beyond the Middle East", BLUE),
              ("minor_from_Other Middle East", "Rest of the Middle East", YELLOW),
@@ -158,10 +174,10 @@ def fig_switching(switch: pd.DataFrame, months_label: str) -> None:
 # Report
 # ---------------------------------------------------------------------------
 def write(r: dict) -> None:
+    """Draw the three charts and write reports/extra_suppliers.md from the results of suppliers.py."""
     gaps, products, medians, eff, switch = r["gaps"], r["products"], r["medians"], r["effects"], r["switching"]
     since_label = r["since_label"]
     since_short = short_period(since_label)
-    months_label = f"{since_short.replace('-', ' to ')}"
     g = gaps[gaps["period"] == since_label].set_index(["level", "name"])
     med = medians.set_index(["level", "name"])
     main = eff[eff["weighting"] == "size"].set_index("effect")
@@ -176,6 +192,7 @@ def write(r: dict) -> None:
     coverage = products["value_bd"].sum() / r["core_value_2024_25"] * 100
 
     def pon_group(level, name):
+        """A group's total as % of its forecast over the war period."""
         row = g.loc[(level, name)]
         return row["actual"] / row["forecast"] * 100
 
@@ -187,12 +204,12 @@ def write(r: dict) -> None:
     since_months = list(range(3, r["last_month"] + 1))
     months_long = f"{pd.Timestamp(2026, since_months[0], 1):%B}-{pd.Timestamp(2026, since_months[-1], 1):%B}"
 
-    # ---- charts --------------------------------------------------------------
+    # ---- charts ----
     fig_groups(gaps, since_label)
     fig_effects(eff)
     fig_switching(switch, months_long)
 
-    # ---- tables --------------------------------------------------------------
+    # ---- tables ----
     def group_md(level, groups, first_col):
         return md_table(pd.DataFrame({
             first_col: groups,
@@ -202,7 +219,7 @@ def write(r: dict) -> None:
                 [f"{med.loc[(level, n), 'beyond_share']:.0f}%" if level == SUPPLIER_LEVEL
                  else f"{med.loc[(level, n), 'median_suppliers']:.1f}" for n in groups],
             "% of normal (group total)": [pon(pon_group(level, n)) for n in groups],
-            "Typical product": [pon(med.loc[(level, n), "median_pct_of_normal"]) for n in groups],
+            "Median product": [pon(med.loc[(level, n), "median_pct_of_normal"]) for n in groups],
             "Normal range": [f"+/-{g.loc[(level, n), 'range_pct']:.0f}%" for n in groups],
             "Real shortfall?": ["**yes**" if g.loc[(level, n), "outside"] and g.loc[(level, n), "gap_pct"] < 0
                                 else ("above normal" if g.loc[(level, n), "outside"] else "no") for n in groups],
@@ -211,21 +228,19 @@ def write(r: dict) -> None:
     effects_md = md_table(pd.DataFrame({
         "Feature of the product": main["label"].tolist(),
         "Change in % of normal": [f"{v:+.1f} points" for v in main["points"]],
-        "Likely range": [f"{lo:+.1f} to {hi:+.1f}" for lo, hi in zip(main["low"], main["high"])],
-        "A clear effect?": ["**yes**" if c else "no (the range includes zero)" for c in main["clear"]],
+        "90% range": [f"{lo:+.1f} to {hi:+.1f}" for lo, hi in zip(main["low"], main["high"])],
+        "Clear effect?": ["**yes**" if c else "no (the range includes zero)" for c in main["clear"]],
     }))
+
+    def effect_cell(wl, key):
+        row = eff[(eff["weighting_label"] == wl) & (eff["effect"] == key)].iloc[0]
+        return f"{row['points']:+.1f} ({row['low']:+.1f} to {row['high']:+.1f})"
+
     checks_md = md_table(pd.DataFrame({
-        "Weighting": [wl for wl in dict.fromkeys(eff["weighting_label"])],
-        "Each doubling of supplier countries": [
-            f"{eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'suppliers')]['points'].iloc[0]:+.1f} "
-            f"({eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'suppliers')]['low'].iloc[0]:+.1f} to "
-            f"{eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'suppliers')]['high'].iloc[0]:+.1f})"
-            for wl in dict.fromkeys(eff["weighting_label"])],
-        "Each extra 10% from beyond the Middle East": [
-            f"{eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'beyond')]['points'].iloc[0]:+.1f} "
-            f"({eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'beyond')]['low'].iloc[0]:+.1f} to "
-            f"{eff[(eff['weighting_label'] == wl) & (eff['effect'] == 'beyond')]['high'].iloc[0]:+.1f})"
-            for wl in dict.fromkeys(eff["weighting_label"])],
+        "Weighting": list(dict.fromkeys(eff["weighting_label"])),
+        "Each doubling of supplier countries": [effect_cell(wl, "suppliers") for wl in dict.fromkeys(eff["weighting_label"])],
+        "Each extra 10% from beyond the Middle East": [effect_cell(wl, "beyond")
+                                                       for wl in dict.fromkeys(eff["weighting_label"])],
     }))
     switch_md = md_table(pd.DataFrame({
         "": [f"{y} ({'war' if y == war_year else 'normal year'})" for y in far_switch.index],
@@ -242,10 +257,12 @@ def write(r: dict) -> None:
         "% of normal": [pon(v) for v in few["pct_of_normal"]],
     }))
 
-    # ---- sentences ----------------------------------------------------------
+    # ---- numbers and sentences that depend on the data ----
     worst_group = min(sup_pons, key=sup_pons.get)
     low_med = med.loc[(SUPPLIER_LEVEL, SUPPLIER_GROUPS[0]), "median_suppliers"]
     high_med = med.loc[(SUPPLIER_LEVEL, SUPPLIER_GROUPS[-1]), "median_suppliers"]
+    # The largest effect of suppliers still consistent with the data: the top of its range, times the
+    # number of doublings between a typical "under 2" product and a typical "8 or more" one.
     sup_span = sup["high"] * np.log2(high_med / low_med)
     lumpy = {"8703", "8409", "8411"}                     # cars and aircraft engines
     lean_products = products[~products.index.isin(lumpy)]
@@ -253,195 +270,158 @@ def write(r: dict) -> None:
             / lean_products.loc[lean_products["supplier_group"] == n, "forecast"].sum() * 100 for n in SUPPLIER_GROUPS}
     if "8703" in products.index:
         cars = products.loc["8703"]
-        cars_sentence = (f"cars, at {pon(cars['pct_of_normal'])} of normal and one of the biggest products, sit in the "
+        cars_sentence = (f"cars, one of the biggest products and at {pon(cars['pct_of_normal'])} of normal, sit in the "
                          f"\"{cars['supplier_group']}\" group.")
     else:
         cars_sentence = "a handful of large products, such as cars, dominate some groups."
 
     sup_lo, sup_hi = min(sup_pons.values()), max(sup_pons.values())
     far_lo_name, far_hi_name = BEYOND_GROUPS[0], BEYOND_GROUPS[-1]
-    full_far_effect = -far_eff["points"] * 10
+    full_far_effect = -far_eff["points"] * 10            # 0% -> 100% from beyond the Middle East
     normal_minor = f"{min(far_switch.loc[normal_years, 'minor_share']):.0f}-{max(far_switch.loc[normal_years, 'minor_share']):.0f}%"
     gcc_before = f"{min(far_switch.loc[normal_years, 'gcc_share']):.0f}-{max(far_switch.loc[normal_years, 'gcc_share']):.0f}%"
+    robust = " The result holds however the products are weighted." if all_clear_beyond and none_clear_sup else ""
+    nearby_inside = "inside" if not g.loc[(BEYOND_LEVEL, far_lo_name), "outside"] else "outside"
 
-    text = f"""# Extra: Were products that relied on few supplier countries hit harder?
+    text = f"""
+# Extra: Did relying on few supplier countries matter?
 
-*Generated by `src/suppliers.py` (charts and text by `src/suppliers_report.py`). Re-running the script refreshes every
-number.*
+A common lesson from supply shocks is to spread purchases across many supplier countries, so that losing one
+doesn't matter much. Steps 5 and 6 showed which goods and origins were hit hardest in 2026. This extra asks
+whether products that depended on one or two countries were hit harder than products with many suppliers, and if
+not, what did matter.
 
-Steps 5 and 6 showed which kinds of goods and which origins were hit hardest. A common piece of supply-chain advice is
-to **spread purchases across many supplier countries**, so that losing one doesn't matter much. This extra asks whether
-that advice would have helped Bahrain in 2026:
+## Key findings
 
-1. Were products bought from only one or two countries hit harder than products with many suppliers?
-2. If not, what did matter?
-3. Did buyers switch to other suppliers during the war?
+- **The number of supplier countries made no measurable difference.** Grouped by how many countries they relied
+  on, products fell to between {pon(sup_lo)} and {pon(sup_hi)} of normal over {since_short}, in no particular order.
+  Compared fairly, each doubling of the number of suppliers changed a product's result by {sup['points']:+.1f}
+  points (90% range {sup['low']:+.1f} to {sup['high']:+.1f}).
+- **Distance did.** Products bought mostly from nearby countries were at {pon(far_pons[far_lo_name])} of normal;
+  products almost entirely from beyond the Middle East were at {pon(far_pons[far_hi_name])}. Each extra 10% from
+  beyond the Middle East meant about {-far_eff['points']:.0f} points further below normal (90% range
+  {-far_eff['high']:.1f} to {-far_eff['low']:.1f}).{robust}
+- **Buyers switched a little.** For products that normally come from far away,
+  {far_switch.loc[war_year, 'minor_share']:.0f}% of what arrived came from countries that had been minor suppliers,
+  against {normal_minor} in normal years. Most of those were other distant countries.
+- **The lesson for Bahrain is to diversify routes, not just countries.** Five suppliers in East Asia all ship
+  through the same strait.
 
-## The short answer
+## Method
 
-| Question | Answer |
-|---|---|
-| Were products with few supplier countries hit harder? | **No clear effect.** Every group fell a long way, to between {pon(sup_lo)} and {pon(sup_hi)} of normal from {since_short}, in no particular order. Compared fairly (with the share from far away held fixed), each doubling of the number of supplier countries changed a product's result by {sup['points']:+.1f} points, likely between {sup['low']:+.1f} and {sup['high']:+.1f}: **no measurable effect**, and small next to distance. |
-| What did matter? | **Where the suppliers were.** Products bought mostly nearby (under 25% from beyond the Middle East) were at {pon(far_pons[far_lo_name])} of normal; products almost entirely from beyond the Middle East at {pon(far_pons[far_hi_name])}. Each extra 10% from beyond the Middle East meant about **{-far_eff['points']:.0f} points further below normal** (likely {-far_eff['high']:.1f} to {-far_eff['low']:.1f}).{" The same holds however the products are weighted." if all_clear_beyond and none_clear_sup else ""} |
-| Did buyers switch suppliers? | **A little.** For products that normally come from far away, {far_switch.loc[war_year, 'minor_share']:.0f}% of what arrived came from countries that had been minor suppliers, against {normal_minor} in normal years. Most of those were other distant countries; GCC suppliers' share of these products rose from {gcc_before} to {far_switch.loc[war_year, 'gcc_share']:.0f}%. |
-| Why it matters | **Spreading purchases across many countries doesn't protect a supply chain if they all ship through the same strait.** Having suppliers on a different route does. |
+**Products and forecasts.** Each product is one 4-digit HS heading from all origins together. {n_products} products
+had imports in almost every month before the war; together they are {coverage:.0f}% of core goods by value. Step 4's
+linear model, rebuilt at this level (as for step 5's close-ups), forecasts each one for 2026 as if there had been
+no war, and its 2024-2025 tests give each group of products a normal range. Added up, the products were at
+{pon(nat)} of normal over {since_short}, in line with step 5.
 
-## Words used in this report
+**Reliance on few countries.** Counting supplier countries isn't enough: a product with one big supplier and ten
+tiny ones really relies on one. Each product therefore gets an effective number of supplier countries from its
+2024-2025 imports, 1 / (sum of each country's squared share), which is the inverse of the Herfindahl-Hirschman
+index. Two countries with 50% each give 2; 90% from one and 10% from another gives 1.2; four countries with 25%
+each give 4.
 
-{glossary.table(8, ["product", "forecast", "pct_of_normal", "normal_range", "real_shortfall", "since_war",
-                    "effective_suppliers", "beyond_share", "beyond_me", "median_product", "regression", "likely_range",
-                    "minor_supplier", "far_dependent"])}
+**Distance.** Each product also gets its share from beyond the Middle East in 2024-2025: the part that normally
+has to pass the Strait of Hormuz or fly.
 
----
+**Comparing fairly.** The two measures could be tangled together: if products with few suppliers also tended to
+come from far away, they would look worse for the wrong reason. So after comparing groups one way at a time, a
+weighted regression looks at both at once, holding value per kg (light goods could fly) and vehicles (car carriers
+stopped) constant. Products are weighted by size, and % of normal is capped at 200% so a few tiny products with
+huge swings can't dominate. Re-running the regression on 2,000 random re-draws of the products (a bootstrap) gives
+each effect a 90% range without assuming the errors follow a normal distribution.
 
-## Before you start: how this extra works
+The approach measures every product against its own tested forecast and separates the two explanations, but it
+shows association rather than cause, and single-product forecasts are noisy. The regression is therefore repeated
+with two other weightings as a check.
 
-### Step 1: Products and their forecasts
-
-Each product is one 4-digit HS heading from all origins together. {n_products} products had imports in almost every
-month before the war; together they are {coverage:.0f}% of core goods by value. Step 4's linear model, rebuilt at this
-level (as for step 5's close-ups), forecasts each one for 2026 as if there had been no war. Added up, the products were at
-{pon(nat)} of normal from {since_short}, matching step 5.
-
-### Step 2: How many countries did a product rely on?
-
-Counting countries isn't enough: a product with one big supplier and ten tiny ones really relies on one. So each product
-gets an **effective number of supplier countries** from its 2024-2025 imports:
-
-> effective number = 1 / (sum of each country's share, squared)
-
-* two countries with 50% each: 1 / (0.5² + 0.5²) = **2**;
-* 90% from one and 10% from another: 1 / (0.9² + 0.1²) = **1.2**;
-* four countries with 25% each: **4**.
-
-### Step 3: How far away were its suppliers?
-
-Each product also gets its **share from beyond the Middle East** in 2024-2025: the part that normally has to pass the
-Strait of Hormuz or fly.
-
-### Step 4: Comparing fairly
-
-The two could be tangled together. If products with few suppliers also tended to come from far away, they would look
-worse for the wrong reason. So, after comparing groups one way at a time, a **regression** looks at both at once, along
-with value per kg (light goods could fly) and whether a product is a vehicle (car carriers stopped). Re-running it on
-2,000 random re-draws of the products gives each effect a **likely range**.
-
----
-
-## 1. Did relying on few countries matter?
+## 1. Number of supplier countries
 
 ![Groups](figures/extra_suppliers_1_groups.png)
 
-**What we did:** grouped products by their effective number of supplier countries and compared each group's total with
-its forecast, from {since_short}.
-
-**What we found:**
-
 {group_md(SUPPLIER_LEVEL, SUPPLIER_GROUPS, "Supplier countries (effective)")}
 
-1. **Every group had a real shortfall**, falling to between {pon(sup_lo)} and {pon(sup_hi)} of normal.
-2. **The order doesn't follow the number of suppliers.** Products with under 2 effective suppliers
-   ({pon(sup_pons[SUPPLIER_GROUPS[0]])}) did better than the {worst_group} group ({pon(sup_pons[worst_group])}). Big single
-   products move the totals: {cars_sentence}
-3. **Leaving out cars and aircraft engines**, the groups range from {pon(min(lean.values()))} to {pon(max(lean.values()))},
-   with a slight edge for products with more suppliers. Section 3 checks whether that edge survives once distance is
-   allowed for. It doesn't clearly.
-4. **The groups are about equally far-dependent**: each gets around {med.xs(SUPPLIER_LEVEL)['beyond_share'].mean():.0f}% of its
-   value from beyond the Middle East. That is a first hint that distance, not the number of countries, decides the result.
+*{since_short}. "Median product" is the middle product of each group, which is less affected by a few big
+products than the group total.*
 
-**The biggest products that relied on one or two countries ({since_short}):**
+Every group had a real shortfall, falling to between {pon(sup_lo)} and {pon(sup_hi)} of normal, and the order
+doesn't follow the number of suppliers: products with under 2 effective suppliers ({pon(sup_pons[SUPPLIER_GROUPS[0]])})
+did better than the {worst_group} group ({pon(sup_pons[worst_group])}). Single large products move these totals;
+{cars_sentence} Leaving out cars and aircraft engines, the groups range from {pon(min(lean.values()))} to
+{pon(max(lean.values()))}, with a slight edge for products with more suppliers. Section 3 checks whether that edge
+survives once distance is allowed for (it doesn't clearly). The groups are also about equally dependent on distant
+suppliers, each getting around {med.xs(SUPPLIER_LEVEL)['beyond_share'].mean():.0f}% of its value from beyond the
+Middle East, a first hint that distance rather than the number of countries decided the result.
+
+The biggest products that relied on one or two countries:
 
 {few_md}
 
-Even these ranged from {pon(few['pct_of_normal'].min())} to {pon(few['pct_of_normal'].max())} of normal. Relying on one
+Even these ranged from {pon(few['pct_of_normal'].min())} to {pon(few['pct_of_normal'].max())} of normal; relying on one
 country didn't decide how they fared.
 
----
-
-## 2. What did matter?
-
-**What we did:** grouped the same products by their share from beyond the Middle East.
-
-**What we found:**
+## 2. Distance
 
 {group_md(BEYOND_LEVEL, BEYOND_GROUPS, "From beyond the Middle East")}
 
-1. **A clear staircase.** Products bought mostly nearby were at {pon(far_pons[far_lo_name])} of normal
-   ({"inside the normal range" if not g.loc[(BEYOND_LEVEL, far_lo_name), "outside"] else "outside the normal range"}).
-   The more a product depended on far-away suppliers, the further it fell, down to {pon(far_pons[far_hi_name])} for
-   products almost entirely from beyond the Middle East.
-2. **The typical product tells the same story**, so it isn't just a few big products.
+*{since_short}.*
 
----
+Here there is a clear staircase. Products bought mostly nearby were at {pon(far_pons[far_lo_name])} of normal
+({nearby_inside} the normal range). The more a product depended on distant suppliers, the further it fell, down to
+{pon(far_pons[far_hi_name])} for products almost entirely from beyond the Middle East. The median product tells the
+same story, so this isn't driven by a few big products.
 
 ## 3. Both at once
 
 ![Effects](figures/extra_suppliers_2_effects.png)
 
-**What we did:** a regression of each product's % of normal on its number of supplier countries (doubling), its share from
-beyond the Middle East (per 10%), its value per kg (doubling) and whether it is a vehicle. Products are weighted by size,
-so a BD 10 million product counts more than a BD 10,000 one. % of normal is capped at 200% so a few tiny products with
-huge swings can't dominate.
-
-**What we found:**
-
 {effects_md}
 
-**The same check with other weightings:**
+*Weighted by size. Supplier count and value per kg enter as doublings, distance per 10 percentage points.*
+
+The same regression with other weightings:
 
 {checks_md}
 
-1. **The number of supplier countries makes no measurable difference.** Every likely range includes zero. Even at
-   the top of its main range ({sup['high']:+.1f} points per doubling), going from a typical "under 2" product
-   ({low_med:.1f} suppliers) to a typical "8 or more" one ({high_med:.1f}) would be worth about {sup_span:.0f} points,
-   well below the {full_far_effect:.0f} points between buying everything nearby and everything from far away.
-2. **Distance makes a clear difference** under every weighting: about {-far_eff['points']:.0f} points per extra 10% from
-   beyond the Middle East. A product entirely from far away did about {full_far_effect:.0f} points worse than one
-   bought entirely nearby, everything else being equal.
-3. **Vehicles did worse still**, even after allowing for distance: car carriers stopped altogether (step 6).
-
-**Why it matters:** in this shock the danger was the **route**, not reliance on one country. Five suppliers in East Asia
-all ship through the same strait, so having five of them gave no protection.
-
----
+The number of supplier countries makes no measurable difference: every range includes zero. Even at the top of
+its main range ({sup['high']:+.1f} points per doubling), going from a typical "under 2" product ({low_med:.1f}
+suppliers) to a typical "8 or more" one ({high_med:.1f}) would be worth about {sup_span:.0f} points, well below the
+{full_far_effect:.0f} points between buying everything nearby and everything from far away. Distance makes a clear
+difference under every weighting, about {-far_eff['points']:.0f} points per extra 10% from beyond the Middle East.
+Vehicles did worse still, even after allowing for distance, because car carriers stopped altogether (step 6).
 
 ## 4. Did buyers switch suppliers?
 
 ![Switching](figures/extra_suppliers_3_switching.png)
 
-**What we did:** for each product, found the countries that had supplied under {MINOR_SHARE:.0%} of it in the two years
-before, and measured how much of each year's {months_long} imports came from them, in the war year and in normal years.
-
-**What we found:**
+For each product, the countries that had supplied under {MINOR_SHARE:.0%} of it in the two years before count as
+minor suppliers. The table shows how much of each year's {months_long} imports came from them, so 2026 can be
+compared with the normal churn among suppliers.
 
 {switch_md}
 
-1. **Some switching happened, for the far-dependent products.** {far_switch.loc[war_year, 'minor_share']:.0f}% of what
-   arrived came from minor suppliers, against {normal_minor} in normal years.
-2. **Most of it went to other distant countries**, not nearby ones. GCC suppliers' share of these products rose
-   from {gcc_before} to {far_switch.loc[war_year, 'gcc_share']:.0f}%: almost double, but still small.
-3. **Brand-new suppliers were rare**: {far_switch.loc[war_year, 'new_share']:.1f}% of far-dependent imports came from
-   countries that hadn't supplied the product at all in the two years before.
+*"Far-dependent" products get at least 75% of their value from beyond the Middle East.*
 
-**Why it matters:** buyers adapted by leaning on countries they already bought a little from, mostly other distant
-ones whose goods could still get through, rather than by finding brand-new suppliers or switching to nearby ones.
+Some switching happened for far-dependent products: {far_switch.loc[war_year, 'minor_share']:.0f}% of what arrived
+came from minor suppliers, against {normal_minor} in normal years. Most of it went to other distant countries rather
+than nearby ones; GCC suppliers' share of these products rose from {gcc_before} to
+{far_switch.loc[war_year, 'gcc_share']:.0f}%, almost double but still small. Brand-new suppliers were rare:
+{far_switch.loc[war_year, 'new_share']:.1f}% of far-dependent imports came from countries that hadn't supplied the
+product at all in the two years before. Buyers adapted by leaning on countries they already bought a little from,
+mostly distant ones whose goods could still get through.
 
----
+## Limitations
 
-## What this can't tell us
+- **Country of origin isn't the shipping route.** The customs data records where goods were made, not how they
+  travelled; a Chinese product bought from a Dubai warehouse counts as Chinese.
+- **One heading can hold many items.** HS heading 8471 (computers) mixes laptops and parts, which may have
+  different suppliers.
+- **Single products are hard to forecast**, so this analysis compares groups and uses ranges and re-draws rather
+  than reading much into any one product.
+- **Association, not cause.** The regression holds a few things constant, but other differences between products
+  could still play a part.
+- **The normal ranges come from two test years**, as in the rest of the project.
 
-1. **Country of origin isn't the shipping route.** The customs data records where goods were made, not how they
-   travelled. A Chinese product bought from a Dubai warehouse counts as Chinese.
-2. **One heading can hold many items.** HS heading 8471 (computers) mixes laptops and parts, which may have different
-   suppliers.
-3. **Single products are hard to forecast**, so this extra compares groups and uses ranges and re-draws rather than
-   reading much into any one product.
-4. **The normal ranges come from two test years**, as in the rest of the project.
-
-## What this means
-
-The usual advice to "diversify suppliers" needs a twist for Bahrain: **diversify routes, not just countries.** Products
-bought mostly from nearby countries, which can come by road, held up; products bought from far away fell a long way
-whether they had one supplier or many.
+{footer("src/suppliers.py", " (charts and text in `src/suppliers_report.py`)")}
 """
-    REPORT_PATH.write_text(text, encoding="utf-8")
+    write_markdown(REPORT_PATH, text)

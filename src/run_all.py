@@ -4,8 +4,23 @@
     python src/run_all.py --skip-download    # use the files already in data/raw
     python src/run_all.py --from shortfall   # start part-way through (earlier steps' results must exist)
 
-Each step is run as its own script, exactly as if you had typed it, and the run stops at the
-first step that fails. Re-running rewrites every report and chart from the data.
+The pipeline
+------------
+Each step reads what the previous ones saved, so they must run in this order:
+
+    download_data    data/raw/*.csv                 the portal's files, untouched
+    check_downloads  (checks only)                  stops the run if a file is incomplete
+    build_dataset    data/processed/*.parquet       cleaned imports and route figures
+    explore          step 3 report                  decisions for the models
+    backtest         data/interim/step4_*           tested models, 2026 forecasts, normal ranges
+    shortfall        data/interim/step5_gaps.csv    the 2026 gaps
+    routes           data/interim/step6_*.csv       route evidence and adapting
+    suppliers        data/interim/extra_*.csv       the supplier-concentration extra
+    summary          reports/summary.md             reads the saved results above
+
+Each step is run as its own script, exactly as if you had typed it, so a step behaves the same
+whether it is run here or on its own. The run stops at the first step that fails and says how to
+resume. Re-running rewrites every report and chart from the data.
 """
 
 from __future__ import annotations
@@ -18,7 +33,7 @@ from pathlib import Path
 
 SRC = Path(__file__).resolve().parent
 
-STEPS = [
+STEPS = [                    # (script name in src/, title printed while it runs)
     ("download_data", "Step 1: download the data"),
     ("check_downloads", "Step 1: check the downloads"),
     ("build_dataset", "Step 2: clean and build the tables"),

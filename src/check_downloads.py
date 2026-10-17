@@ -2,11 +2,28 @@
 
     python src/check_downloads.py
 
-For every imports file it loads the data with the project's loader, then compares
-each month's total value and weight with the figures measured on the portal on
-2026-10-11 (config.REFERENCE_MONTHLY_IMPORTS). It also reports things that
-matter later: product codes that aren't 8 digits, unreadable numbers, and
-product-country-month combinations that appear more than once.
+Why this step exists
+--------------------
+A CSV export can be cut short, a portal can change its column names, and a loader can misread a
+column without raising an error. Any of those would flow silently into every later number. This
+script catches them before any analysis is run, by checking the files against figures read
+independently from the portal.
+
+What it checks
+--------------
+* **Imports.** Each yearly file is loaded with the project's own loader (so the loader is tested
+  too), and every month's total value and weight is compared with the totals read from the
+  portal's API on 2026-10-11 (``config.REFERENCE_MONTHLY_IMPORTS``). The reference figures are
+  rounded, so a difference of up to 1 (BD million or thousand tonnes) is allowed.
+* **Routes.** Each port and airport file is loaded and a few known values are checked
+  (``config.REFERENCE_ROUTE_POINTS``).
+* **Things to deal with in cleaning**, reported as notes rather than failures: product codes that
+  aren't 8 digits, unreadable numbers, rows that repeat a product-country-month, and general
+  cargo months that look like thousands typed with a decimal point.
+
+It also says when the portal has published a month that wasn't there on 2026-10-11, which is
+the signal to re-run the pipeline. The script exits with code 1 if anything fails, so
+``run_all.py`` stops before the analysis.
 """
 
 from __future__ import annotations
@@ -22,6 +39,7 @@ TOLERANCE = 1  # reference figures are rounded to whole millions / thousand tonn
 
 
 def check_imports() -> tuple[list[str], list[str]]:
+    """Compare every imports file month by month with the reference totals. Returns (problems, notes)."""
     problems, notes = [], []
     print("IMPORTS")
     print(f"{'year':<6}{'rows':>10}{'months':>8}{'value (BD m)':>14}{'weight (kt)':>13}   vs portal")
@@ -38,6 +56,7 @@ def check_imports() -> tuple[list[str], list[str]]:
             print(f"{ds.year:<6}{'unreadable':>10}")
             continue
 
+        # Monthly totals in the same units and rounding as the reference figures.
         monthly = df.groupby("month")[["value_bd", "weight_kg"]].sum()
         value_m = (monthly["value_bd"] / 1e6).round().astype(int)
         weight_kt = (monthly["weight_kg"] / 1e6).round().astype(int)
@@ -51,7 +70,7 @@ def check_imports() -> tuple[list[str], list[str]]:
                 matched += 1
             else:
                 mismatched.append(f"month {month}: {value_m[month]}/{weight_kt[month]} vs {ref_value}/{ref_weight}")
-        extra = sorted(set(monthly.index) - set(range(1, len(reference) + 1)))
+        extra = sorted(set(monthly.index) - set(range(1, len(reference) + 1)))   # months published since the check
 
         verdict = f"{matched}/{len(reference)} months match"
         if extra:
@@ -63,6 +82,7 @@ def check_imports() -> tuple[list[str], list[str]]:
         if extra:
             notes.append(f"{ds.name}: the portal has added month(s) {extra} since 2026-10-11, so there is new data to use")
 
+        # Not failures, but they shape the cleaning in step 2.
         bad_codes = (~df["hs8"].astype(object).str.fullmatch(r"\d{8}")).sum()
         if bad_codes:
             notes.append(f"{ds.name}: {bad_codes:,} row(s) with a product code that isn't 8 digits")
@@ -76,6 +96,7 @@ def check_imports() -> tuple[list[str], list[str]]:
 
 
 def check_routes() -> tuple[list[str], list[str]]:
+    """Load every port and airport file and check a few known values. Returns (problems, notes)."""
     problems, notes = [], []
     print("\nROUTE TOTALS")
     loaded: dict[str, pd.DataFrame] = {}
@@ -90,6 +111,8 @@ def check_routes() -> tuple[list[str], list[str]]:
         first, last = df["date"].min(), df["date"].max()
         print(f"{ds.name:<18}{len(df):>5} rows   {first:%b %Y} to {last:%b %Y}   series: {df['series'].nunique()}")
         if ds.name == "port_general_cargo":
+            # Normal months are 50,000-150,000 freight tonnes; a value below 1,000 is almost certainly
+            # a thousands separator typed as a decimal point (56.186 for 56,186). Fixed in step 2.
             typos = df[(df["value"] > 0) & (df["value"] < 1_000)]
             if len(typos):
                 months = ", ".join(f"{d:%b %Y}" for d in typos["date"])
@@ -117,7 +140,7 @@ def main() -> int:
     notes += route_notes
 
     if notes:
-        print("\nNOTES (expected; we deal with these in step 2)")
+        print("\nNOTES (expected; handled in step 2)")
         for n in notes:
             print(f"  - {n}")
     if problems:

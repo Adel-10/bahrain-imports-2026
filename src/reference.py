@@ -1,7 +1,33 @@
-"""Small reference tables the pipeline needs: HS sections, product groups, calendar.
+"""Hand-made reference tables: product classification, origin regions, 2026 periods, calendar.
 
-Everything here is hand-checked data rather than downloaded data, so it lives in
-code where changes are visible in version control.
+Nothing here is downloaded. These are the classification choices the analysis rests on, kept
+in code so every change to them is visible in version control and covered by the tests.
+
+What is defined here, and why
+-----------------------------
+* **HS sections.** Customs codes follow the Harmonized System (HS): 2 digits give the chapter
+  (84 = machinery), 4 digits the heading, 8 digits the national product line. The 21 sections
+  group chapters into readable families ("Machinery and electrical" = chapters 84-85). Reports
+  use sections because 97 chapters are too many to read.
+* **Product groups and analysis groups.** A few bulk raw materials (iron ore, alumina, coke,
+  building minerals) are about 84% of Bahrain's import weight but about a fifth of its value.
+  They arrive in whole shiploads for a handful of factories, so they are lumpy and follow their
+  own logic. Gold and jewellery (chapter 71) follow the gold price and a few very large
+  shipments. Both are split off from **core goods**, the everyday supply chains that the
+  forecasts are built for. Pro: the forecasts are not thrown off by a single ore ship or
+  gold consignment. Con: the bulk and precious-metal results rest on simpler comparisons.
+* **Origin regions.** The customs data records where goods came from, not how they travelled.
+  Countries are therefore grouped by the route goods would normally take to Bahrain: GCC goods
+  can come by road over the King Fahd Causeway; goods from East Asia, Europe or the Americas
+  normally come by sea through the Strait of Hormuz, or by air. Pro: it ties the trade data to
+  the routes that were closed. Con: it is an assumption about routes, not a record of them.
+* **2026 periods.** Months are grouped by what was happening (the shock in March, airspace
+  reopened in April-May, a brief Hormuz reopening in June-July), using the dates in
+  ``data/reference/events.csv``. Periods of two months also soften the timing gap between a
+  ship arriving and the goods being recorded by customs.
+* **Calendar.** Ramadan, the two Eids and COVID restrictions move imports from month to month,
+  so the forecasting models get them as inputs. Ramadan moves about 11 days earlier every year,
+  so a month-of-year effect alone cannot capture it.
 """
 
 from __future__ import annotations
@@ -15,6 +41,8 @@ from hijridate import Gregorian, Hijri
 # ---------------------------------------------------------------------------
 # HS sections: the 21 top-level groups of the Harmonized System.
 # (section number, roman numeral, short name, first chapter, last chapter)
+# Chapters 98-99 are Bahrain's own special codes (for example confidential goods); they are
+# kept as a 22nd "section" so every row has one, but they are left out of product comparisons.
 # ---------------------------------------------------------------------------
 HS_SECTIONS = [
     (1, "I", "Animal products", 1, 5),
@@ -50,6 +78,7 @@ def chapter_to_section(chapter: str | int) -> tuple[int, str]:
 
 
 def hs_sections_table() -> pd.DataFrame:
+    """One row per HS chapter with its section number, numeral and name (saved to data/reference/)."""
     rows = [
         {"chapter": f"{ch:02d}", "section_id": num, "section_roman": roman, "section_name": name}
         for num, roman, name, lo, hi in HS_SECTIONS
@@ -62,7 +91,8 @@ def hs_sections_table() -> pd.DataFrame:
 # Product groups. A handful of bulk raw materials make up most of Bahrain's
 # import WEIGHT (iron ore alone is about half), so they get their own groups;
 # otherwise they would drown out every weight-based comparison.
-# Measured on 2024-2025 data: these HS4 codes = about 85% of import weight.
+# Measured on 2024-2025 data: these HS4 codes = about 84% of import weight.
+# Keys are 4-digit HS headings; everything not listed is "General goods".
 # ---------------------------------------------------------------------------
 PRODUCT_GROUPS = {
     "2601": "Iron ore",
@@ -91,7 +121,8 @@ PRECIOUS_CHAPTER = "71"
 def add_analysis_group(df: pd.DataFrame) -> pd.DataFrame:
     """Add a categorical `group` column (Core goods / Precious metals / Bulk materials).
 
-    Needs `product_group` and `hs2` columns (as produced by build_dataset.py).
+    Needs `product_group` and `hs2` columns (as produced by build_dataset.py). Bulk takes
+    priority over precious metals, though in practice no heading is both.
     """
     bulk = df["product_group"].astype(object) != DEFAULT_GROUP
     precious = df["hs2"].astype(object) == PRECIOUS_CHAPTER
@@ -176,6 +207,7 @@ def war_periods_2026(last_month: int) -> dict[str, list[int]]:
 
 
 def period_event(label: str) -> str:
+    """A one-line description of what was happening in a 2026 period (used in report tables)."""
     return PERIOD_EVENTS_2026.get(label, PERIOD_EVENTS_2026["later"])
 
 
@@ -190,7 +222,12 @@ COVID_CLOSURE_DAYS = {"2021-05": 5, "2021-06": 9}           # 27 May - 9 June 20
 
 
 def build_calendar(start: str = "2019-01", end: str = "2027-12") -> pd.DataFrame:
-    """One row per month with Ramadan days, Eid flags and COVID flags."""
+    """One row per month with Ramadan days, Eid flags and COVID flags.
+
+    Ramadan is counted in days per month (it usually spans two months), because the effect on
+    imports grows with how much of the month it covers. The Hijri year loop converts the first
+    and last day of each Ramadan, and the dates of both Eids, to the Gregorian calendar.
+    """
     ramadan_days: Counter = Counter()
     eid_fitr, eid_adha = set(), set()
     first, last = pd.Period(start, "M"), pd.Period(end, "M")

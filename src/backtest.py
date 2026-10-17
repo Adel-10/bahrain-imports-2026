@@ -2,15 +2,34 @@
 
     python src/backtest.py
 
-"Pretend it's January": standing at the end of December 2023, every model forecasts
-each month of 2024 using only data up to then; the same is repeated for 2025.
+Why a backtest
+--------------
+The whole project rests on one comparison: what arrived in 2026 against what would have arrived
+without the war. "What would have arrived" is a forecast, so its accuracy has to be known before
+any gap can be trusted. The only honest way to know it is to make the same kind of forecast for
+years where the answer is known, using only the data that would have been available at the time.
 
-  1. Tuning: model settings (and whether to keep 2021) are chosen on the 2024 test only.
-  2. Final check: 2025 is used once, with the chosen settings, to confirm the choice.
-  3. Ranges: the chosen model's misses in those tests set a "9 months out of 10" range
-     for every total we report (national, each origin region, each section).
-  4. 2026: the chosen model is retrained on 2021-2025 and forecasts 2026. Only January
-     and February (before the war) are checked here; step 5 uses the rest.
+How it works ("pretend it's January")
+-------------------------------------
+Standing at the end of December 2023, every model forecasts each month of 2024 using only data
+up to then; the same is repeated, one year later, for 2025.
+
+  1. **Tuning** on 2024 only: model settings, and whether to keep the COVID year 2021 in the
+     training data, are chosen by the average miss on the totals the reports use (national,
+     each origin region, each section).
+  2. **Final check** on 2025, used once with the chosen settings. Because nothing was chosen
+     using 2025, it gives an unbiased view of how well the choice works on a new year.
+  3. **Ranges.** The chosen model's misses in both years set a "9 months out of 10" range for
+     every reported total. The ranges are also set from 2024 alone and checked on 2025, to see
+     whether they hold on a year they weren't built from.
+  4. **2026.** The chosen model is retrained on 2021-2025 and forecasts 2026 from the end of
+     December 2025. Only January and February (before the war) are checked here; step 5 uses
+     the rest.
+
+Pros: no information from the test year leaks into the forecast or the settings, and the test
+mimics exactly how the 2026 forecast is made. Cons: only two test years, so the normal ranges
+rest on 24 months per total, and tuning on a single year can favour settings that happened to
+suit 2024 (the 2025 check guards against this).
 
 Writes reports/step4_models.md, four charts in reports/figures/, and for step 5 (in data/interim/):
 the 2026 forecasts of the chosen model and of the best trees (a second opinion), their ranges,
@@ -25,11 +44,11 @@ import warnings
 import numpy as np
 import pandas as pd
 
-from features import FEATURES, NUMERIC, PROCESSED_DIR, fold_tables, load_calendar, load_core
-from models import RATIO_FEATURES, BoostedTrees, LinearModel, SameMonth, SimpleAverage, clipped_target
 from config import ROOT
+from features import fold_tables, load_calendar, load_core
+from models import BoostedTrees, LinearModel, SameMonth, SimpleAverage
 
-warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)   # empty-slice means on brand-new series; handled as NaN
 
 INTERIM_DIR = ROOT / "data" / "interim"
 REPORT_PATH = ROOT / "reports" / "step4_models.md"
@@ -38,7 +57,8 @@ LEVELS = {"National total": [], "Origin region": ["region"], "Section": ["sectio
 REPORT_LEVELS = ["National total", "Origin region", "Section"]      # what step 5 reports, so what tuning optimises
 RANGE_COVERAGE = 0.9                                                # "9 months out of 10"
 
-# Candidates tried on the 2024 test. The first entry of each family is the default.
+# Candidates tried on the 2024 test. Four ridge strengths for the linear model, and four tree set-ups
+# running from large flexible trees (first) to small heavily constrained ones (last).
 LINEAR_GRID = [dict(ridge=r) for r in (0.01, 0.1, 1.0, 10.0)]
 TREE_GRID = [
     dict(loss="absolute_error", learning_rate=0.05, max_iter=300, max_leaf_nodes=31, min_samples_leaf=50, weight_power=1.0),
@@ -61,6 +81,7 @@ def forecasts_frame(panel, test: pd.DataFrame, ratio: np.ndarray) -> pd.DataFram
 
 
 def totals(frame: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
+    """Actual and forecast added up to the totals given by `keys` (e.g. by region), month by month."""
     cols = [c for c in ("actual", "forecast") if c in frame]
     return frame.groupby([*keys, "target_month"], observed=True)[cols].sum()
 
@@ -70,12 +91,17 @@ def miss(frame: pd.DataFrame, keys: list[str]) -> float:
 
     (Step 3 divided by the forecast. With several models the actual is the fairer yardstick:
     it is the same for every model, so a model can't look better by forecasting too high.)
+
+    This is the weighted absolute percentage error (WAPE). Compared with the average of
+    percentage errors (MAPE), it isn't blown up by tiny totals and it weights each total by its
+    size, which matches the question "how many dinars off was the forecast?".
     """
     t = totals(frame, keys)
     return float((t["actual"] - t["forecast"]).abs().sum() / t["actual"].sum() * 100)
 
 
 def score(frame: pd.DataFrame) -> dict:
+    """Miss at every level, overall bias (forecast too high or too low) and the tuning score."""
     out = {level: miss(frame, keys) for level, keys in LEVELS.items()}
     out["Bias %"] = float((frame["forecast"].sum() / frame["actual"].sum() - 1) * 100)
     out["Reported levels (average)"] = float(np.mean([out[level] for level in REPORT_LEVELS]))
@@ -83,6 +109,7 @@ def score(frame: pd.DataFrame) -> dict:
 
 
 def describe(params: dict) -> str:
+    """Settings as readable text, e.g. 'ridge=1.0'."""
     return ", ".join(f"{k}={v}" for k, v in params.items())
 
 
@@ -115,9 +142,11 @@ def tune(core, calendar) -> tuple[pd.DataFrame, dict]:
         results += rows
         details[first_year] = info
     tuning = pd.DataFrame(results)
+    # Tuning score: the average miss on the three levels the reports use (national, region, section).
     key = "Reported levels (average)"
     best_first_year = int(tuning[tuning["family"].isin(["Linear", "Trees"])].sort_values(key).iloc[0]["first_year"])
     chosen = tuning[tuning["first_year"] == best_first_year]
+    # Best settings within each family, then the better of the two families.
     best = {fam: chosen[chosen["family"] == fam].sort_values(key).iloc[0]["params"] for fam in ("Linear", "Trees")}
     winner = min(("Linear", "Trees"), key=lambda fam: chosen[(chosen["family"] == fam)
                                                              & (chosen["settings"] == describe(best[fam]))][key].iloc[0])
@@ -138,7 +167,11 @@ def final_check(core, calendar, choice: dict) -> tuple[pd.DataFrame, dict]:
 
 
 def aggregate_errors(frame: pd.DataFrame) -> pd.DataFrame:
-    """Monthly % errors (actual / forecast - 1) of every reported total."""
+    """Monthly % errors (actual / forecast - 1) of every reported total.
+
+    The error is measured relative to the forecast because that is how the 2026 gaps are
+    expressed ("x% below the forecast"), so the ranges and the gaps are on the same scale.
+    """
     parts = []
     for level, keys in LEVELS.items():
         if level not in REPORT_LEVELS:
@@ -153,7 +186,12 @@ def aggregate_errors(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def ranges_from(errors: pd.DataFrame) -> pd.DataFrame:
-    """Half-width of the "9 months out of 10" range for each total: 90th percentile of |error|."""
+    """Half-width of the "9 months out of 10" range for each total: 90th percentile of |error|.
+
+    This is an empirical interval: it makes no assumption about the shape of the errors (no
+    normal distribution), it just reads off how big the misses actually were. The downside is
+    that with 24 months per total the 90th percentile is itself uncertain.
+    """
     return (errors.assign(abs_error=errors["error"].abs())
             .groupby(["level", "name"])["abs_error"].quantile(RANGE_COVERAGE).rename("range").reset_index())
 
@@ -179,6 +217,7 @@ def forecast_2026(core, calendar, choice: dict):
     frame = forecasts_frame(panel, test, model.predict(test))
     frame_trees = forecasts_frame(panel, test, trees.predict(test))
 
+    # January-February 2026 were before the war, so they are a small extra out-of-sample check.
     pre_war = test[test["target_month"].dt.month.isin([1, 2])].reset_index(drop=True)
     candidates = [("Simple rule", SimpleAverage(), {}), ("Same month", SameMonth(), {}),
                   ("Linear", model, winner_params)]
@@ -200,6 +239,7 @@ def backtest_predictions(frames: dict, keys: dict) -> pd.DataFrame:
 
 
 def main() -> int:
+    """Tune, check, set the ranges, forecast 2026, save the results for step 5 and write the report."""
     t0 = time.time()
     core, calendar = load_core(), load_calendar()
 
@@ -215,7 +255,9 @@ def main() -> int:
     winner_key = (choice["winner"], describe(choice["best"][choice["winner"]]))
     trees_key = ("Trees", describe(choice["best"]["Trees"]))
     errors = {year: aggregate_errors(frames[year][winner_key]) for year in (TUNE_YEAR, CHECK_YEAR)}
+    # Do ranges set on 2024 hold on 2025? (Ideally about 90% of 2025 months fall inside.)
     calib = coverage(errors[CHECK_YEAR], ranges_from(errors[TUNE_YEAR]))
+    # The ranges used from step 5 onward come from both years, for more months per total.
     ranges = ranges_from(pd.concat(errors.values()))
     ranges_trees = ranges_from(pd.concat(aggregate_errors(frames[y][trees_key]) for y in (TUNE_YEAR, CHECK_YEAR)))
 

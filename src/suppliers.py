@@ -2,21 +2,35 @@
 
     python src/suppliers.py          (needs step 2's tables; about 30 seconds)
 
-The idea in plain words
------------------------
+The question
+------------
+A common lesson from supply shocks is "don't depend on one country". This script tests whether
+that was the lesson of 2026 for Bahrain, or whether what mattered was where the suppliers were.
+
+Method
+------
 1. **Products.** Each 4-digit HS heading (for example 8703, cars) with regular imports is one
    product. Step 4's linear model, rebuilt at this level as in step 5's close-ups, forecasts each
    product's 2026 imports without the war, and is tested on 2024 and 2025 for normal ranges.
 2. **Reliance on few countries.** For each product, the *effective number of supplier countries*
-   in 2024-2025: 1 / (sum of each country's squared share). Two equal suppliers give 2; one
-   supplier with 90% and another with 10% gives about 1.2.
+   in 2024-2025: 1 / (sum of each country's squared share), the inverse of the
+   Herfindahl-Hirschman index. Two equal suppliers give 2; one supplier with 90% and another with
+   10% gives about 1.2. Unlike a simple count, it isn't inflated by many tiny suppliers.
 3. **Route.** For each product, the share of its 2024-2025 imports from beyond the Middle East
    (normally shipped through the Strait of Hormuz, or flown).
-4. **Comparison.** Products are grouped both ways and compared with their forecasts. A regression
-   then looks at both at once, because the two could be tangled together; bootstrapping (re-running
-   it on 2,000 random re-draws of the products) gives a likely range for each effect.
+4. **Comparison.** Products are grouped both ways and compared with their forecasts. Because the
+   two measures could be tangled together (far-away goods might also have fewer suppliers), a
+   weighted regression then looks at both at once, holding value per kg and vehicles constant.
+   Bootstrapping (re-running it on 2,000 random re-draws of the products) gives a 90% range for
+   each effect without assuming the errors are normally distributed.
 5. **Switching.** How much of each product came from countries that had been minor suppliers
-   before (under 5%), in 2026 and in normal years.
+   before (under 5%), in 2026 and in normal years, to see whether importers changed suppliers.
+
+Pros: every product is measured against its own tested forecast, and the regression separates
+the two explanations. Cons: product-level forecasts are noisy; the regression shows association,
+not cause; supplier shares are by country of origin, which can differ from where goods were
+shipped from; and it is weighted by size, so a few large products carry a lot of weight (the
+report shows two other weightings as a check).
 
 Writes reports/extra_suppliers.md, three charts, and data/interim/extra_suppliers_*.csv.
 """
@@ -36,7 +50,7 @@ from models import LinearModel
 from routes import BEYOND, GCC, load_core_weight, origin_route
 from shortfall import build_periods, period_gaps, window_ranges
 
-warnings.filterwarnings("ignore", category=RuntimeWarning)
+warnings.filterwarnings("ignore", category=RuntimeWarning)   # ratios with zero denominators become NaN, as intended
 
 INTERIM_DIR = ROOT / "data" / "interim"
 REPORT_PATH = ROOT / "reports" / "extra_suppliers.md"
@@ -47,9 +61,11 @@ VEHICLES_SECTION = 17
 SPECIAL_CHAPTERS = {"98", "99"}       # national special and confidential codes: not real products
 MINOR_SHARE = 0.05                    # a country with under 5% of a product before counts as a minor supplier
 FAR_FROM = 0.75                       # "far-dependent": at least 75% from beyond the Middle East
-N_BOOT = 2000
-SEED = 0
+N_BOOT = 2000                         # bootstrap re-draws for the regression ranges
+SEED = 0                              # fixed so the ranges are the same on every run
 
+# Group boundaries. Effective suppliers are grouped on a roughly doubling scale; the beyond-Middle-East
+# share in quarters, with the top quarter split because most value sits there.
 SUPPLIER_LEVEL = "Supplier countries"
 BEYOND_LEVEL = "From beyond the Middle East"
 SUPPLIER_BINS = [0, 2, 3, 5, 8, np.inf]
@@ -57,6 +73,7 @@ SUPPLIER_GROUPS = ["Under 2", "2 to 3", "3 to 5", "5 to 8", "8 or more"]
 BEYOND_BINS = [0, 0.25, 0.5, 0.75, 0.9, 1.0 + 1e-9]
 BEYOND_GROUPS = ["Under 25%", "25-50%", "50-75%", "75-90%", "90% or more"]
 
+# The regression's explanatory variables, in the units the report quotes them in.
 EFFECTS = [
     ("suppliers", "Each doubling of the number of supplier countries"),
     ("beyond", "Each extra 10% of the product from beyond the Middle East"),
@@ -73,7 +90,8 @@ WEIGHTINGS = [("size", "Weighted by size (main)"), ("sqrt", "Weighted by the squ
 def product_forecasts(core: pd.DataFrame, calendar: pd.DataFrame, years=(*TEST_YEARS, 2026)) -> pd.DataFrame:
     """Step 4's linear model at HS4 level (all origins together): one "pretend it's January" run per year.
 
-    Pooled "other" series mix many products, so they are left out.
+    Pooled "other" series mix many products, so they are left out, as are the national special
+    codes (chapters 98-99), which are not real products.
     """
     frames = []
     for year in years:
@@ -98,10 +116,13 @@ def effective_suppliers(shares: pd.Series) -> float:
 
 def supplier_profile(core_w: pd.DataFrame, years=PROFILE_YEARS) -> pd.DataFrame:
     """For each HS4 product, from the chosen years: value, effective supplier countries, top supplier,
-    share from beyond the Middle East, value per kg and whether it is a vehicle."""
+    share from beyond the Middle East, value per kg and whether it is a vehicle.
+
+    Measured on 2024-2025 so the profile describes the supply chain as it was before the war.
+    """
     hist = core_w[core_w["date"].dt.year.isin(years)]
     by_country = hist.groupby(["hs4", "iso2"])["value_bd"].sum()
-    by_country = by_country[by_country > 0]
+    by_country = by_country[by_country > 0]                       # negative or zero rows can't be shares
     shares = by_country / by_country.groupby(level=0).transform("sum")
     profile = pd.DataFrame({
         "value_bd": by_country.groupby(level=0).sum(),
@@ -127,7 +148,7 @@ def supplier_profile(core_w: pd.DataFrame, years=PROFILE_YEARS) -> pd.DataFrame:
 # 4. Comparisons
 # ---------------------------------------------------------------------------
 def group_totals(frame: pd.DataFrame) -> pd.DataFrame:
-    """Monthly totals for both groupings, in the shape step 5's functions expect."""
+    """Monthly totals for both groupings, in the shape step 5's functions expect (as in routes.py)."""
     parts = []
     for level, col in ((SUPPLIER_LEVEL, "supplier_group"), (BEYOND_LEVEL, "beyond_group")):
         t = frame.groupby([col, "target_month"])[["actual", "forecast"]].sum().reset_index()
@@ -148,7 +169,11 @@ def product_results(frame26: pd.DataFrame, profile: pd.DataFrame, months: list[i
 
 
 def group_medians(products: pd.DataFrame) -> pd.DataFrame:
-    """Typical (median) product in each group, plus counts and shares of value."""
+    """Typical (median) product in each group, plus counts and shares of value.
+
+    The median is used because single products can be far above normal (a restocking surge) and
+    would pull an average around; % of normal is capped at 200 for the same reason.
+    """
     rows = []
     for level, col, groups in ((SUPPLIER_LEVEL, "supplier_group", SUPPLIER_GROUPS),
                                (BEYOND_LEVEL, "beyond_group", BEYOND_GROUPS)):
@@ -163,7 +188,11 @@ def group_medians(products: pd.DataFrame) -> pd.DataFrame:
 
 
 def design(products: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-    """y = % of normal (capped at 0-200); X = constant and the four effects in EFFECTS, in their units."""
+    """y = % of normal (capped at 0-200); X = constant and the four effects in EFFECTS, in their units.
+
+    Supplier count and value per kg enter as log2, so their coefficient is the effect of a doubling;
+    the beyond share is multiplied by 10 so its coefficient is the effect of 10 percentage points.
+    """
     y = products["pct_of_normal"].clip(0, 200).to_numpy()
     X = np.column_stack([
         np.ones(len(products)),
@@ -176,14 +205,27 @@ def design(products: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 
 def weighted_least_squares(X: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
-    """Coefficients minimising sum(w * (y - Xb)^2), solved on sqrt(w)-scaled rows."""
+    """Coefficients minimising sum(w * (y - Xb)^2), solved on sqrt(w)-scaled rows.
+
+    Multiplying each row of X and y by sqrt(w) turns weighted least squares into ordinary least
+    squares, which np.linalg.lstsq solves stably.
+    """
     sw = np.sqrt(w)
     coef, *_ = np.linalg.lstsq(X * sw[:, None], y * sw, rcond=None)
     return coef
 
 
 def effects(products: pd.DataFrame, n_boot: int = N_BOOT, seed: int = SEED) -> pd.DataFrame:
-    """Each effect, for each weighting, with a 90% bootstrap range (products re-drawn with replacement)."""
+    """Each effect, for each weighting, with a 90% bootstrap range (products re-drawn with replacement).
+
+    The same 2,000 re-draws are used for every weighting so the three can be compared fairly. An
+    effect is "clear" when its whole 90% range is on one side of zero.
+
+    Weightings: by size (forecast BD, the main one, because the question is about the money); by
+    the square root of size (a compromise); and equal (every product counts the same, so small
+    products have as much say as large ones). If an effect only appears under one weighting, it
+    depends on a few large products.
+    """
     X, y = design(products)
     size = products["forecast"].to_numpy()
     weights = {"size": size, "sqrt": np.sqrt(size), "equal": np.ones(len(products))}
@@ -209,6 +251,9 @@ def switching(core_w: pd.DataFrame, profile: pd.DataFrame, years=(2024, 2025, 20
               minor: float = MINOR_SHARE) -> pd.DataFrame:
     """Share of each year's imports (chosen months) that came from minor suppliers of that product.
 
+    Normal years (2024, 2025) are computed the same way, so 2026 can be compared with the usual
+    amount of churn among suppliers.
+
     A minor supplier had under `minor` of the product's imports in the two years before. Computed for
     all products and for far-dependent ones (at least FAR_FROM from beyond the Middle East), with
     the minor-supplier share split by where those suppliers are.
@@ -219,6 +264,7 @@ def switching(core_w: pd.DataFrame, profile: pd.DataFrame, years=(2024, 2025, 20
     route_of = data.drop_duplicates("iso2").set_index("iso2")["region"].map(origin_route)
     far_products = set(profile.index[profile["beyond_share"] >= FAR_FROM])
     for year in years:
+        # Each country's share of each product in the two years before `year`.
         before = data[data["date"].dt.year.isin([year - 2, year - 1])].groupby(["hs4", "iso2"])["value_bd"].sum()
         shares = (before / before.groupby(level=0).transform("sum")).rename("share_before")
         now = data[(data["date"].dt.year == year) & data["date"].dt.month.isin(months)]
@@ -267,6 +313,7 @@ def product_names(codes: list[str]) -> dict[str, str]:
 
 
 def country_names(codes: list[str]) -> dict[str, str]:
+    """Country codes -> tidied country names from the cleaned data."""
     rows = pd.read_parquet(ROOT / "data" / "processed" / "imports_clean.parquet", columns=["iso2", "country_en"],
                            filters=[("iso2", "in", list(codes))])
     lookup = rows.drop_duplicates("iso2").set_index("iso2")["country_en"]
@@ -277,6 +324,7 @@ def country_names(codes: list[str]) -> dict[str, str]:
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
+    """Forecast every product, build the supplier profiles, run the comparisons and write the report."""
     t0 = time.time()
     print("1/4 Product forecasts (HS4) for 2024, 2025 and 2026 ...", flush=True)
     core = load_core()
@@ -305,6 +353,7 @@ def main() -> int:
     print("4/4 Switching, and the report ...", flush=True)
     switch = switching(core_w, profile, months=tuple(since_months))
 
+    # The largest products with fewer than two effective suppliers, shown as examples in the report.
     few = products[products["supplier_group"] == SUPPLIER_GROUPS[0]].sort_values("value_bd", ascending=False).head(6)
     names = {"products": product_names(list(few.index)), "countries": country_names(list(few["top_country"]))}
 

@@ -1,6 +1,12 @@
 """Tests for step 4: the training table, the models and the scoring.
 
-Run with:  pytest
+    pytest tests/test_models.py
+
+The most important properties are about honesty: features may only use months up to the
+forecast date, and training rows must stop before the test year. These are tested directly on a
+small toy panel. The other tests check that gradient descent reaches the normal-equations answer,
+that the linear model recovers a known relationship, and that the miss, ranges and coverage
+calculations give the values worked out by hand.
 """
 
 from __future__ import annotations

@@ -1,6 +1,11 @@
 """Tests for loaders.py, using real rows copied from each yearly file's format.
 
-Run with:  pytest
+    pytest tests/test_loaders.py
+
+Each yearly file was published slightly differently (month labels, column names, a missing year
+column), so each format gets its own test with rows copied from the real file, including the
+awkward cases: quoted commas, Arabic text, product codes with leading zeros and Namibia's
+country code "NA".
 """
 
 from __future__ import annotations

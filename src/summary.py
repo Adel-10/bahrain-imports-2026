@@ -2,10 +2,14 @@
 
     python src/summary.py          (run steps 4 to 6 first: it reads their saved results)
 
-Pulls the main results of steps 4, 5 and 6 into reports/summary.md, in the same easy style as the
-step reports. Every number is read from the files those steps save, so re-running the pipeline
-keeps the summary in step with the detailed reports. It draws no new charts; it reuses the main
-ones from the step reports.
+Pulls the main results of steps 4, 5 and 6 (and the supplier extra, if it has been run) into
+reports/summary.md. Every number is read from the files those steps save in data/interim/, so
+re-running the pipeline keeps the summary in step with the detailed reports. It draws no new
+charts; it reuses the main ones from the step reports.
+
+Two numbers are recomputed here rather than read: the national miss of each forecast in the
+test years (``model_scores``) and the check of 2024-based ranges on 2025 (``range_coverage``).
+Both come from the saved test forecasts, using the same functions as step 4.
 """
 
 from __future__ import annotations
@@ -13,19 +17,17 @@ from __future__ import annotations
 import pandas as pd
 import pyarrow.parquet as pq
 
-import glossary
 from backtest import aggregate_errors, coverage, ranges_from
-from build_dataset import md_table
 from config import ROOT
 from features import load_core
 from reference import period_event
-from step5_report import MIN_SHARE, SKIP_SECTIONS, and_list, bd_m, pct
-from step6_report import pon, region_text, share_words, short_period
+from reporting import and_list, bd_m, footer, md_table, pct, pon, region_text, share_words, short_period, write_markdown
+from step5_report import MIN_SHARE, SKIP_SECTIONS
 from suppliers import BEYOND_GROUPS
 
 INTERIM_DIR = ROOT / "data" / "interim"
 REPORT_PATH = ROOT / "reports" / "summary.md"
-NEEDED = ["step4_backtest.parquet", "step5_gaps.csv", "step6_indicators.csv", "step6_route_gaps.csv",
+NEEDED = [                       # files the earlier steps must have written"step4_backtest.parquet", "step5_gaps.csv", "step6_indicators.csv", "step6_route_gaps.csv",
           "step6_elimination.csv", "step6_adapting.csv", "step6_engines.csv"]
 
 
@@ -62,6 +64,7 @@ def range_coverage(backtest: pd.DataFrame) -> pd.Series:
 
 
 def load_results() -> dict:
+    """Read everything the summary needs from data/interim/ (and two figures from the cleaned data)."""
     missing = [f for f in NEEDED if not (INTERIM_DIR / f).exists()]
     if missing:
         raise SystemExit(f"Missing {missing} in data/interim. Run src/backtest.py, src/shortfall.py and src/routes.py "
@@ -101,10 +104,12 @@ SHORT_NAMES = {"Machinery and electrical": "machinery", "Vehicles and transport"
 
 
 def short_name(section: str) -> str:
+    """Section names as they read inside a sentence: 'Machinery and electrical' -> 'machinery'."""
     return SHORT_NAMES.get(section, section.lower())
 
 
 def write(r: dict) -> str:
+    """The summary report, built from the saved results of the earlier steps."""
     gaps, ind, rg, el, ad, eng = (r["gaps"], r["indicators"], r["route_gaps"], r["elimination"], r["adapting"],
                                   r["engines"])
     periods = list(dict.fromkeys(gaps["period"]))
@@ -112,11 +117,12 @@ def write(r: dict) -> str:
     war = [p for p in periods if p not in ("Jan-Feb", since)]
     latest = war[-1]
     since_short = short_period(since)
+    last_name = f"{pd.Timestamp(2026, int(r['last_import'].month), 1):%B}"
     nat = gaps[gaps["level"] == "National total"].set_index("period")
     total = nat.loc[since]
     trees_total = r["gaps_trees"][(r["gaps_trees"]["level"] == "National total")].set_index("period").loc[since]
 
-    # Sections and regions, as in step 5
+    # Sections and regions, chosen as in step 5.
     sec = gaps[(gaps["level"] == "Section") & (gaps["period"] == since)]
     sec = sec[(sec["forecast"] / total["forecast"] * 100 >= MIN_SHARE) & ~sec["label"].isin(SKIP_SECTIONS)]
     sec = sec.sort_values("gap_pct")
@@ -143,13 +149,12 @@ def write(r: dict) -> str:
     regs_inside = regs_ad[regs_ad["latest_inside_range"]].sort_values("forecast", ascending=False)
     eall = el.loc[since]
     gcc_row = regs_ad[regs_ad["label"] == "GCC"]
-    gcc_above = (f"; goods from GCC countries were above normal ({pon(gcc_row['latest'].iloc[0])})"
+    gcc_above = (f", and goods from GCC countries were above normal ({pon(gcc_row['latest'].iloc[0])})"
                  if len(gcc_row) and not gcc_row["latest_inside_range"].iloc[0] and gcc_row["latest"].iloc[0] > 100
                  else "")
     scores, cov = r["scores"], r["coverage"]
     years = list(scores.columns)
     final_year = years[-1]
-    lin, simple = scores.loc["Linear model", final_year], scores.loc["Simple rule (last year's average month)", final_year]
     cont, air = "Containers unloaded", "Air cargo and mail unloaded"
     light_am, heavy_am = eng.loc["Apr-May", "gap_pct_without_engines"], route(weight_lvl, "Heavy", "Apr-May")
 
@@ -187,6 +192,7 @@ def write(r: dict) -> str:
                                             "Core goods imported, by weight"]] for p in [*war, *after]},
     }))
 
+    # The supplier extra is optional: its finding, section and link only appear if it has been run.
     sup = r["suppliers"]
     if sup is not None:
         sg = sup["groups"][sup["groups"]["period"] == since].set_index(["level", "name"])
@@ -199,232 +205,217 @@ def write(r: dict) -> str:
         se_s, se_b = se.loc["suppliers"], se.loc["beyond"]
         war_year = int(sw.index.max())
         normal_sw = sw.drop(index=war_year)["minor_share"]
-        suppliers_row = (f"| Did relying on few supplier countries matter? | **No clear effect.** Products bought from one or "
-                         f"two countries fell about as far as products with many suppliers. **What mattered was distance**: "
-                         f"each extra 10% of a product from beyond the Middle East meant about {-se_b['points']:.0f} points "
-                         f"further below normal. |\n")
+        suppliers_finding = (f"- **Relying on few supplier countries didn't matter; relying on distant ones did.** Products "
+                             f"bought from one or two countries fell about as far as products with many suppliers, while "
+                             f"each extra 10% of a product from beyond the Middle East meant about {-se_b['points']:.0f} "
+                             f"points further below normal. The lesson is to diversify routes, not just countries.")
         suppliers_section = f"""
----
-
-## 7. Extra: did relying on few supplier countries matter?
+## 7. Did relying on few supplier countries matter?
 
 ![Suppliers](figures/extra_suppliers_1_groups.png)
 
-* **The number of supplier countries made no measurable difference.** Grouped by how many countries they relied on,
-  products fell to between {pon(count_pons.min())} and {pon(count_pons.max())} of normal, in no particular order.
-  Allowing for distance, each doubling of supplier countries changed the result by {se_s['points']:+.1f} points
-  (likely {se_s['low']:+.1f} to {se_s['high']:+.1f}).
-* **Distance did.** Products bought mostly nearby were at {pon(far_pons[BEYOND_GROUPS[0]])} of normal;
-  products almost entirely from beyond the Middle East at {pon(far_pons[BEYOND_GROUPS[-1]])}. Each extra
-  10% from beyond the Middle East meant about {-se_b['points']:.0f} points further below normal.
-* **Some switching:** {sw.loc[war_year, 'minor_share']:.0f}% of far-dependent products' imports came from countries that had
-  been minor suppliers, against {normal_sw.min():.0f}-{normal_sw.max():.0f}% in normal years, mostly other distant
-  countries.
-* **The lesson:** diversify routes, not just countries.
+Grouped by how many countries they relied on (measured as an effective number of suppliers), products fell to
+between {pon(count_pons.min())} and {pon(count_pons.max())} of normal, in no particular order. Allowing for
+distance in a weighted regression, each doubling of the number of supplier countries changed a product's result by
+{se_s['points']:+.1f} points (90% bootstrap range {se_s['low']:+.1f} to {se_s['high']:+.1f}), which is no measurable
+effect. Distance mattered: products bought mostly nearby were at {pon(far_pons[BEYOND_GROUPS[0]])} of normal, and
+products almost entirely from beyond the Middle East at {pon(far_pons[BEYOND_GROUPS[-1]])}. Buyers switched a
+little: {sw.loc[war_year, 'minor_share']:.0f}% of far-dependent products' imports came from countries that had been
+minor suppliers, against {normal_sw.min():.0f}-{normal_sw.max():.0f}% in normal years, mostly other distant countries.
+Five suppliers in East Asia all ship through the same strait, so having five of them gave no protection.
 """
         suppliers_link = "| Extra | [Supplier concentration](extra_suppliers.md) | `src/suppliers.py` |\n"
-        next_items = """1. **A "what if" range for the road's own share**, using reasonable assumptions about how much a container holds and how
-   much general cargo was imports.
-2. **Update with August onwards** when the portal publishes it, the first months with Hormuz closed and no reopening."""
+        next_items = """- **A "what if" range for the road's own share**, under stated assumptions about container loads and how much
+  general cargo was imports.
+- **Update with August 2026 onwards** when the portal publishes it: the first months with Hormuz closed and no
+  reopening."""
     else:
-        suppliers_row = suppliers_section = suppliers_link = ""
-        next_items = """1. **A "what if" range for the road's own share**, using reasonable assumptions about how much a container holds and how
-   much general cargo was imports.
-2. **Did products that relied on only a few supplier countries get hit harder?**
-3. **Update with August onwards** when the portal publishes it, the first months with Hormuz closed and no reopening."""
+        suppliers_finding = suppliers_section = suppliers_link = ""
+        next_items = """- **A "what if" range for the road's own share**, under stated assumptions about container loads and how much
+  general cargo was imports.
+- **Whether products that relied on only a few supplier countries were hit harder.**
+- **Update with August 2026 onwards** when the portal publishes it: the first months with Hormuz closed and no
+  reopening."""
 
-    text = f"""# Shock and Recovery: Bahrain's import supply chains in 2026
+    g0, g1 = pct(reg['gap_pct'].iloc[0]), pct(reg['gap_pct'].iloc[1])
+    two_gaps = f"both {g0}" if g0 == g1 else f"{g0} and {g1}"
+    after_finding = (f" Port figures suggest they kept adapting after Hormuz closed again on 11 July: containers "
+                     f"unloaded rose from {pon(ind_pon(cont, latest))} of normal in {latest} to "
+                     f"{pon(ind_pon(cont, after_label))} in {after_label}." if after_label else "")
 
-*The whole project in one read. Generated by `src/summary.py` from the results of steps 4 to 6; the detailed reports
-are linked at the end.*
+    text = f"""
+# Shock and Recovery: Bahrain's import supply chains in 2026
 
-On 28 February 2026, war in the Gulf closed the Strait of Hormuz and Bahrain's airspace. Everything that reaches
-Bahrain by sea from outside the Gulf passes through that strait. This project uses Bahrain's official monthly import data to answer three
-questions:
+On 28 February 2026, war in the Gulf closed the Strait of Hormuz and, for more than a month, Bahrain's airspace.
+Everything that reaches Bahrain by sea from outside the Gulf passes through that strait. I used Bahrain's official
+monthly import statistics ({r['all_rows'] / 1e6:.2f} million rows, January 2021 to {r['last_import']:%B %Y}) together with
+port and airport figures to measure how far imports fell below what they would otherwise have been, which supply
+chains and routes broke, and how far they had come back.
 
-1. How far did imports fall below what they would have been without the war?
-2. Which supply chains were hit hardest, and which routes broke?
-3. How far had they come back, and how?
+## Key findings
 
-## The short answer
+- **Everyday imports fell {abs(nat.loc['March', 'gap_pct']):.0f}% below normal in March 2026**, then
+  {abs(nat.loc['Apr-May', 'gap_pct']):.0f}% in April-May and {abs(nat.loc['Jun-Jul', 'gap_pct']):.0f}% in June-July,
+  against a tested forecast of imports without the war. About BD {bd_m(total['lost'])} million of goods didn't arrive
+  from March to {last_name} ({abs(total['gap_pct']):.0f}% of what was expected; likely between BD
+  {bd_m(total['lost_low'])} and {bd_m(total['lost_high'])} million).
+- **{sec.iloc[0]['label']} were hit hardest ({pct(sec.iloc[0]['gap_pct'])})**, and
+  {short_name(top_lost.iloc[0]['label'])} and {short_name(top_lost.iloc[1]['label'])} together were
+  {top_lost_share:.0f}% of the money lost. Goods from {region_text(reg.index[0])} and {region_text(reg.index[1])} fell
+  furthest ({two_gaps}); goods from GCC countries held up
+  ({pct(reg.loc['GCC', 'gap_pct'])}, within the normal range).
+- **Container ships and car carriers were the routes that broke.** Containers unloaded ran at about a third of normal
+  from March to {last_name}, and car carriers unloaded no vehicles at all from April.
+- **Goods got in another way.** Containers and planes could have carried at most
+  {eall['containers_air_max_share']:.0f}% of what arrived by weight, so at least {eall['other_min_share']:.0f}% came over
+  the King Fahd Causeway or by general cargo ship. While planes could fly but ships couldn't pass Hormuz, light goods
+  from far away fell {abs(light_am):.0f}% (leaving out aircraft engines) and heavy goods {abs(heavy_am):.0f}%.
+- **Supply chains came back about {share_words(nat_ad['came_back_pct'])} of the way by {latest}.** Vehicles, clothing,
+  East Asia and the Americas lagged.{after_finding}
+{suppliers_finding}
 
-| Question | Answer |
-|---|---|
-| How far did imports fall? | **{pct(nat.loc['March', 'gap_pct'])} in March**, {pct(nat.loc['Apr-May', 'gap_pct'])} in April-May and {pct(nat.loc['Jun-Jul', 'gap_pct'])} in June-July, against a forecast of imports without the war. About **BD {bd_m(total['lost'])} million** of everyday goods didn't arrive from {since_short} ({pct(total['gap_pct'])}); likely between BD {bd_m(total['lost_low'])} and {bd_m(total['lost_high'])} million. |
-| Which supply chains were hit hardest? | **{sec.iloc[0]['label']}** ({pct(sec.iloc[0]['gap_pct'])}). {short_name(top_lost.iloc[0]['label']).capitalize()} and {short_name(top_lost.iloc[1]['label'])} together were {top_lost_share:.0f}% of the money lost. By origin, **{region_text(reg.index[0])} ({pct(reg['gap_pct'].iloc[0])}) and {region_text(reg.index[1])} ({pct(reg['gap_pct'].iloc[1])})**; goods from **GCC countries held up** ({pct(reg.loc['GCC', 'gap_pct'])}). |
-| Which routes broke? | **Container ships** (about a third of the usual containers from March to {pd.Timestamp(2026, int(r['last_import'].month), 1):%B}), **car carriers** (none at all from April) and, in March, **planes**. |
-| How did goods still get in? | **By other routes.** Containers and planes could have carried at most {eall['containers_air_max_share']:.0f}% of what arrived (by weight), so **at least {eall['other_min_share']:.0f}% came over the King Fahd Causeway or by general cargo ship**. Light goods from far away held up while planes could fly: {pct(light_am)} in April-May (leaving out aircraft engines), against {pct(heavy_am)} for heavy goods. |
-| How far had they come back? | **About {share_words(nat_ad['came_back_pct'])} of the way** by {latest} (from {pon(nat_ad['worst'])} of normal to {pon(nat_ad['latest'])}). Vehicles, clothing, East Asia and the Americas lagged.{" Port figures suggest supply chains kept adapting after Hormuz closed again on 11 July." if after_label else ""} |
-{suppliers_row}| How do we know it's not normal ups and downs? | The forecast was **tested on {and_list([str(y) for y in years])} as if it were January**: nationally it missed by {lin:.1f}% a month in {final_year}. Its normal ranges held {cov.min():.0f}-{cov.max():.0f}% of the time in testing, and every war-time gap is far outside them. |
+![Imports against the forecast without the war](figures/step5_1_national.png)
 
-## Words used in this summary
+## Approach
 
-{glossary.table(7, ["core_goods", "national_total", "origin_region", "section", "series", "forecast", "miss",
-                    "normal_range", "gap", "real_shortfall", "lost", "since_war", "normal", "pct_of_normal", "route",
-                    "causeway", "elimination", "came_back", "adapting", "units"])}
+1. **Forecast imports without the war.** Core goods were split into about {round(r['n_series'], -1)} monthly series (one customs chapter
+   from one origin region). A ridge regression written from scratch learned from 2021-2025 how these usually move and,
+   standing at the end of December 2025, forecast every month of 2026 as if nothing had happened.
+2. **Test the forecast on normal years first.** The same model was run on {and_list([str(y) for y in years])} as if it were
+   January of each year, using only data available at the time. Its misses set a normal range for every total and
+   period length.
+3. **Compare 2026 with the forecast.** A gap only counts as a real shortfall if it is bigger than the normal range. A
+   second model (gradient-boosted trees) gives a second opinion.
+4. **Follow the routes.** Port and airport figures show which routes broke. The causeway publishes nothing, so its share
+   is bounded by elimination: the most containers and planes could have carried, taken away from what arrived.
 
----
-
-## Before you start: the idea in four steps
-
-1. **Forecast imports without the war.** A model learns from 2021-2025 how monthly imports usually move, then, standing
-   at the end of December 2025, forecasts every month of 2026 as if nothing had happened.
-2. **Test the forecast on normal years first.** The same model is run on 2024 and 2025 as if it were January of each
-   year. How far off it was sets a **normal range** for every total.
-3. **Compare 2026 with the forecast.** A gap only counts as a **real shortfall** if it's bigger than the normal range.
-4. **Look at the routes.** Port and airport figures show which routes broke. The road has no figures, so its share is
-   worked out by **elimination**.
-
-The periods used throughout:
+The [methodology note](../docs/methodology.md) explains each choice and its trade-offs. The periods used throughout:
 
 {periods_md}
 
----
+## 1. Data
 
-## 1. The data
+The import data has one row per month, 8-digit product code and origin country, from the Bahrain Open Data Portal.
+Six yearly files in three slightly different formats were combined into one table, repeated shipments added together,
+and every month's totals checked against the portal's own figures; nothing was dropped. Imports were split into three
+groups that behave very differently: core goods (the everyday supply chains, about three-quarters of value), bulk
+materials (iron ore, alumina, coke and building minerals, most of the weight, for a few plants) and precious metals
+(which follow the gold price). This summary is about core goods. The route data are monthly figures for Khalifa Bin
+Salman Port and Bahrain International Airport, which run two months ahead of the import data. Several months of the
+port's general cargo figures had a decimal point typed for a thousands separator and were repaired and marked.
 
-* **Imports:** {r['all_rows'] / 1e6:.2f} million rows, one per month, 8-digit product code and origin country, from
-  January 2021 to {r['last_import']:%B %Y}, from the Bahrain Open Data Portal.
-* **Routes:** monthly figures for Khalifa Bin Salman Port (containers, ship visits, vehicles from car carriers, general
-  cargo) and Bahrain International Airport (air cargo), which run two months ahead of the import data.
-* **Three groups, analysed separately:** *core goods* (the everyday supply chains, about three-quarters of value);
-  *bulk materials* (iron ore, alumina, coke, construction minerals: most of the weight, for a few factories); and
-  *precious metals*, which follow the gold price. This summary is about core goods.
-* **Cleaning:** six yearly files in three formats combined into one table; repeated shipments added together; totals
-  checked month by month against the portal; port general cargo figures typed with a decimal point for a thousands
-  separator repaired and marked.
-
----
-
-## 2. The model: forecasting imports without the war
+## 2. The forecast
 
 ![Model comparison](figures/step4_2_model_comparison.png)
 
-**What we did:** split core goods into {r['n_series']} series (one HS2 chapter from one origin region) and compared four
-forecasts, each tested on {and_list([str(y) for y in years])} as if it were January:
-
-1. the **simple rule** (every month like last year's average month);
-2. **the same month last year**;
-3. a **linear model** (ridge regression) written from scratch in NumPy, solved two ways: exactly (normal equations) and
-   by gradient descent, which agree to computer precision;
-4. **gradient-boosted trees** (scikit-learn).
-
-**What we found (national miss, % of actual imports):**
+Four forecasts were compared, each tested on {and_list([str(y) for y in years])} as if it were January: the simple rule
+(every month like last year's average month), the same month last year, the ridge regression (solved both with the
+normal equations and by gradient descent, which agree to floating-point precision), and gradient-boosted trees
+(scikit-learn).
 
 {scores_md}
 
-1. **The linear model won** in both years, at every level. Most of its gain comes from getting the level right while
-   imports were growing.
-2. **The trees never beat the linear model**, and in the {final_year} final check they did no better than the simple rule
-   ({scores.loc['Gradient-boosted trees', final_year]:.1f}%): with five years of noisy monthly data, their flexibility
-   mostly fitted noise.
-3. **The ranges work:** set on {years[0]} and checked on {final_year}, {cov.min():.0f}-{cov.max():.0f}% of months fell inside
-   them (the target was 90%).
-4. **It got January-February 2026 right**, before the war: {pct(nat.loc['Jan-Feb', 'gap_pct'])}, inside the normal range.
+*National miss: the total absolute monthly error as % of actual imports.*
 
-**Why it matters:** the whole project rests on this forecast, so it had to be tested before being trusted with 2026.
+The linear model won in both years and at every level, mostly because it gets the level right while imports are
+growing. The trees never beat it, and in the {final_year} final check they did no better than the simple rule
+({scores.loc['Gradient-boosted trees', final_year]:.1f}%): with five years of noisy monthly data their flexibility mostly
+fitted noise. The normal ranges work: set on {years[0]} and checked on {final_year}, {cov.min():.0f}-{cov.max():.0f}% of
+months fell inside them, against a target of 90%. The model also got January-February 2026 right, before the war
+({pct(nat.loc['Jan-Feb', 'gap_pct'])}, inside the normal range).
 
----
-
-## 3. How far below normal were imports?
-
-![National](figures/step5_1_national.png)
+## 3. How far imports fell
 
 {nat_md}
 
-* **March was the worst month.** Each period after that was better, but every war-time period was a real shortfall.
-* **About BD {bd_m(total['lost'])} million was lost from {since_short}** ({abs(total['gap_pct']):.0f}% of what was expected).
-* **A second model agrees:** the gradient-boosted trees put the national gap at {pct(trees_total['gap_pct'])}.
+March was the worst month. Each period after that was better, but every war-time period was a real shortfall, and in
+total about BD {bd_m(total['lost'])} million was lost from {since_short}. The gradient-boosted trees put the national gap
+at {pct(trees_total['gap_pct'])}, against {pct(total['gap_pct'])} for the linear model.
 
----
+## 4. Which supply chains were hit hardest
 
-## 4. Which supply chains were hit hardest?
-
-**The five sections that fell furthest ({since_short}):**
+The five sections that fell furthest over {since_short}:
 
 {hit_md}
 
-**By origin ({since_short}):**
+By origin:
 
 {reg_md}
 
-The pattern is about **routes**: goods made far away and shipped through Hormuz fell furthest, while goods from GCC
-countries, which can come by road, held up.
+The pattern is about routes more than products: goods made far away and shipped through Hormuz fell furthest, while
+goods from GCC countries, which can come by road, held up.
 
----
-
-## 5. Which routes broke, and how did goods get around them?
+## 5. Which routes broke, and how goods got around them
 
 ![Route groups](figures/step6_2_route_groups.png)
 
-**Routes (% of the same months in 2025):**
-
 {routes_md}
 
-1. **Containers fell to about a third, and car carriers stopped.** Planes were grounded in March and came back slowly,
-   never above normal.
-2. **Goods with another way in held up.** Goods from GCC countries were {pct(route(origin_lvl, 'GCC', since))} against the
-   forecast; goods from beyond the Middle East {pct(route(origin_lvl, 'Beyond the Middle East', since))}. In April-May,
-   with the airspace open but Hormuz shut, light goods from beyond the Middle East were {pct(light_am)} (leaving out
-   aircraft engines) against {pct(heavy_am)} for heavy goods.
+*% of the same months of 2025.*
+
+Containers fell to about a third of normal and car carriers stopped. Planes were grounded in March and came back slowly,
+never above normal. Goods with another way in held up: goods from GCC countries were
+{pct(route(origin_lvl, 'GCC', since))} against the forecast, while goods from beyond the Middle East were
+{pct(route(origin_lvl, 'Beyond the Middle East', since))}. In April-May, with the airspace open but Hormuz shut, light
+goods from beyond the Middle East were {pct(light_am)} (leaving out aircraft engines) against {pct(heavy_am)} for heavy
+goods.
 
 ![Elimination](figures/step6_3_elimination.png)
 
-3. **At least {eall['other_min_share']:.0f}% came by road or general cargo ship.** By weight, imports were at
-   {pon(eall['weight_pct_of_2025'])} of their 2025 level while containers ran at {pon(eall['containers_pct_of_2025'])}.
-   Even assuming every import had come in a container in 2025, containers and planes could have carried at most
-   {eall['containers_air_max_share']:.0f}% of what arrived; the rest, about {eall['other_min_t'] / 1000:,.0f} thousand tonnes,
-   must have come over the causeway or by general cargo ship. Cars made in East Asia and Europe kept arriving from May,
-   with no car carrier calling.
+By weight, core goods arrived at {pon(eall['weight_pct_of_2025'])} of their 2025 level while containers ran at
+{pon(eall['containers_pct_of_2025'])}. Even assuming every import had come in a container in 2025, containers and
+planes could have carried at most {eall['containers_air_max_share']:.0f}% of what arrived. The rest, about
+{eall['other_min_t'] / 1000:,.0f} thousand tonnes, must have come over the causeway or by general cargo ship. Cars made in
+East Asia and Europe kept arriving from May even though no car carrier called.
 
----
-
-## 6. How far had supply chains come back?
+## 6. How far supply chains came back
 
 ![Adapting](figures/step6_4_adapting.png)
 
-* **Nationally, about {share_words(nat_ad['came_back_pct'])} of the way** by {latest}: from {pon(nat_ad['worst'])} of normal in
-  {nat_ad['worst_period']} to {pon(nat_ad['latest'])}.
-* **Back inside the normal range:** {and_list(regs_inside['label'].map(region_text))} among origins{gcc_above}.
-* **Still far below:** {and_list(f"{l.lower()} ({pon(v)})" for l, v in zip(still['label'].head(4), still['latest'].head(4)))};
-  {and_list(f"{region_text(l)} ({pon(v)})" for l, v in zip(regs_still['label'], regs_still['latest']))}.
-* **Part of the bounce came when Hormuz briefly reopened** (18 June to 11 July), so it isn't all adapting.{f'''
-* **After July:** with Hormuz closed again, containers unloaded rose from {pon(ind_pon(cont, latest))} of normal in {latest}
-  to {pon(ind_pon(cont, after_label))} in {after_label}, a sign that supply chains kept finding other ways in.''' if after_label else ""}
-
+Nationally, imports came back about {share_words(nat_ad['came_back_pct'])} of the way by {latest}, from
+{pon(nat_ad['worst'])} of normal in {nat_ad['worst_period']} to {pon(nat_ad['latest'])}. Back inside their normal range
+were {and_list(regs_inside['label'].map(region_text))} among origins{gcc_above}. Still far below normal were
+{and_list(f"{l.lower()} ({pon(v)})" for l, v in zip(still['label'].head(4), still['latest'].head(4)))} among sections,
+and {and_list(f"{region_text(l)} ({pon(v)})" for l, v in zip(regs_still['label'], regs_still['latest']))} among origins. Part of the bounce
+came while Hormuz was briefly open (18 June to 11 July), so not all of it was adapting.{f''' After July, with Hormuz
+closed again, containers unloaded rose from {pon(ind_pon(cont, latest))} of normal in {latest} to
+{pon(ind_pon(cont, after_label))} in {after_label}, a sign that supply chains kept finding other ways in.''' if after_label else ""}
 {suppliers_section}
----
+## Limitations
 
-## What this project can't tell us
-
-1. **The road has no figures**, so its share is a minimum worked out by elimination, not a measurement.
-2. **The normal ranges come from two test years.** More normal years would make them more reliable.
-3. **One kind of forecast decides the answer.** The trees give almost the same result, but both learn from the same
-   five years.
-4. **The port's general cargo figures needed repairs**, so conclusions don't lean on them.
+- **The causeway has no published figures**, so the road's share is a minimum worked out by elimination, not a
+  measurement.
+- **The normal ranges come from two test years.** More normal years would make them more reliable.
+- **Both models learn from the same five years**, so their agreement is reassuring but not independent proof.
+- **Customs months and arrival months don't always line up.** Periods of two months or more soften this.
+- **The port's general cargo figures needed repairs** and may include goods loaded for export, so no conclusion rests on
+  them alone.
 
 ## What I'd do next
 
 {next_items}
 
-## The detailed reports
+## Detailed reports
 
 | Step | Report | Script |
 |---|---|---|
-| 2. Clean | [Cleaning report](step2_cleaning_report.md) | `src/build_dataset.py` |
-| 3. Explore | [Exploration](step3_exploration.md) | `src/explore.py` |
-| 4. Model | [Forecasting models](step4_models.md) | `src/backtest.py` |
+| 2. Clean | [Cleaning the data](step2_cleaning_report.md) | `src/build_dataset.py` |
+| 3. Explore | [Exploring the data](step3_exploration.md) | `src/explore.py` |
+| 4. Forecast | [Forecasting imports without the war](step4_models.md) | `src/backtest.py` |
 | 5. Shortfall | [The 2026 shortfall](step5_shortfall.md) | `src/shortfall.py` |
 | 6. Routes | [Routes and adapting](step6_routes.md) | `src/routes.py` |
 {suppliers_link}
-*Source: Bahrain Open Data Portal (iGA), www.data.gov.bh. All analysis is my own and is not attributed to the iGA.*
+{footer("src/summary.py", " from the saved results of steps 4 to 6")}
+
+*All analysis is my own and is not attributed to the iGA.*
 """
     return text
 
 
 def main() -> int:
+    """Read the saved results and write reports/summary.md."""
     results = load_results()
-    REPORT_PATH.write_text(write(results), encoding="utf-8")
+    write_markdown(REPORT_PATH, write(results))
     print(f"Wrote {REPORT_PATH.relative_to(ROOT)}")
     return 0
 

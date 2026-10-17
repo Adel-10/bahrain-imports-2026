@@ -1,6 +1,26 @@
-"""Project settings: where files live and which portal datasets we use.
+"""Project settings: where files live, which portal datasets are used, and reference figures.
 
-Every other script imports from here, so dataset ids and paths are defined once.
+Every other script imports its paths and dataset ids from here, so they are defined once.
+
+Datasets
+--------
+All data comes from the Bahrain Open Data Portal (data.gov.bh), which runs on Opendatasoft and
+offers each dataset as a CSV export through a public API. Two kinds of dataset are used:
+
+* **Imports** (one file per year, 2021-2026): every row is one 8-digit customs code from one
+  origin country in one month, with value in Bahraini dinars (BD) and US dollars, weight in kg
+  and quantity. These are the official non-oil import statistics.
+* **Routes** (port and airport): monthly national totals for Khalifa Bin Salman Port
+  (containers, ship visits, vehicles unloaded from car carriers, general cargo tonnage) and for
+  Bahrain International Airport (air cargo tonnage). They say nothing about individual products,
+  but they show which routes were working.
+
+Reference figures
+-----------------
+``check_downloads.py`` compares each downloaded file against totals that were read directly
+from the portal's API when the project was set up (October 2026). If a download is truncated
+or the portal changes its format, those checks fail loudly instead of the analysis quietly
+running on bad data.
 """
 
 from __future__ import annotations
@@ -8,19 +28,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[1]          # the project folder (this file is in src/)
 RAW_DIR = ROOT / "data" / "raw"
 REFERENCE_DIR = ROOT / "data" / "reference"
 MANIFEST_PATH = RAW_DIR / "MANIFEST.json"
 
 PORTAL = "https://www.data.gov.bh"
-EXPORT_URL = PORTAL + "/api/explore/v2.1/catalog/datasets/{dataset_id}/exports/csv"
-META_URL = PORTAL + "/api/explore/v2.1/catalog/datasets/{dataset_id}"
+EXPORT_URL = PORTAL + "/api/explore/v2.1/catalog/datasets/{dataset_id}/exports/csv"   # full dataset as one CSV
+META_URL = PORTAL + "/api/explore/v2.1/catalog/datasets/{dataset_id}"                 # title, last-modified date
 
 
 @dataclass(frozen=True)
 class Dataset:
-    name: str           # our short name; the file is saved as data/raw/<name>.csv
+    name: str           # short name used in this project; the file is saved as data/raw/<name>.csv
     dataset_id: str     # the portal's id for the dataset
     kind: str           # "imports" (product x country x month) or "route" (national monthly totals)
     year: int | None    # imports are published as one file per year
@@ -38,7 +58,6 @@ DATASETS: list[Dataset] = [
     Dataset("port_containers", "01-container-statistics-at-khalifa-bin-salman-port", "route", None, 460),
     Dataset("port_vessels", "02-vessel-traffic-statistics-at-khalifa-bin-salman-port", "route", None, 368),
     Dataset("airport_cargo", "02-caa-monthly-air-cargo-movement-at-bahrain-international-airport", "route", None, 144),
-    # Added in step 6: car-carrier (roll-on/roll-off) vehicles and general cargo at the same port.
     Dataset("port_roro", "03-roro-units-statistics-at-khalifa-bin-salman-port", "route", None, 93, "2026-10-13"),
     Dataset("port_general_cargo", "04-general-cargo-volume-statistics-at-khalifa-bin-salman-port", "route", None, 93,
             "2026-10-13"),
@@ -50,9 +69,9 @@ DATASETS_BY_NAME = {d.name: d for d in DATASETS}
 # ---------------------------------------------------------------------------
 # Reference figures for check_downloads.py
 #
-# Monthly import totals measured through the portal's own API on 2026-10-11,
-# as (value in BD millions, weight in thousand tonnes), both rounded.
-# If a downloaded file adds up to the same numbers, it arrived complete.
+# Monthly import totals read from the portal's own API on 2026-10-11, as
+# (value in BD millions, weight in thousand tonnes), both rounded. If a downloaded
+# file adds up to the same numbers month by month, it arrived complete.
 # ---------------------------------------------------------------------------
 REFERENCE_MONTHLY_IMPORTS: dict[int, list[tuple[int, int]]] = {
     2021: [(409, 2223), (429, 2732), (474, 2009), (457, 2704), (402, 2337), (389, 1932),
@@ -69,7 +88,7 @@ REFERENCE_MONTHLY_IMPORTS: dict[int, list[tuple[int, int]]] = {
            (438, 1168)],  # January-July: the months published as of 2026-10-11
 }
 
-# Spot checks for the route files: (dataset, series, year, months, expected total).
+# Spot checks for the route files: (dataset, series name in the file, year, months, expected total).
 REFERENCE_ROUTE_POINTS: list[tuple[str, str, int, tuple[int, ...], float]] = [
     ("port_containers", "Imports Containers (TEUs)", 2025, (7,), 20_510),
     ("port_containers", "Imports Containers (TEUs)", 2026, (3,), 6_147),

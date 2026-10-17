@@ -1,6 +1,10 @@
 """Tests for step 5: periods, ranges for longer periods, and gaps.
 
-Run with:  pytest
+    pytest tests/test_shortfall.py
+
+Checks that new months published by the portal create new periods automatically, that ranges
+for longer periods come out narrower when monthly errors partly cancel, and that gaps and BD lost
+(with their likely range) are computed as described in the report.
 """
 
 from __future__ import annotations
